@@ -4,6 +4,7 @@ import type { AppState, ProcurementCycle, TimelineEvent } from "../src/types";
 import type { ExecutionAdapter } from "./adapters";
 import type { KeeperHubDirectExecutionClient } from "./direct-execution";
 import { createInitialState } from "./fixtures";
+import { PaymentQuoteExpiredError } from "./marketplace";
 import type { MarketplaceClient } from "./marketplace";
 import type { StateStore } from "./store";
 
@@ -228,8 +229,27 @@ export class ProcurementOrchestrator {
     try {
       result = await this.marketplace.pay(payment);
     } catch (error) {
+      if (error instanceof PaymentQuoteExpiredError) {
+        const refreshed = await this.marketplace.quote(provider);
+        refreshed.cycleId = cycle.id;
+        if (refreshed.amount !== payment.amount || refreshed.amount !== provider.price) {
+          cycle.status = "policy_blocked";
+          cycle.error = "Refreshed quote changed price";
+          cycle.completedAt = new Date().toISOString();
+          this.state.pendingPayment = null;
+          this.state.mode = "ready";
+          this.addEvent("error", "Refreshed quote blocked", "Marketplace terms changed; no payment was attempted.");
+          await this.store.save(this.state);
+          return { state: this.snapshot(), cycle, replayed: false, needsReconfirmation: false };
+        }
+        this.state.pendingPayment = refreshed;
+        this.state.mode = "awaiting_payment";
+        this.addEvent("warning", "Payment quote refreshed", `${refreshed.amount.toFixed(2)} ${refreshed.token} on ${refreshed.chainName} requires a new authorization.`);
+        await this.store.save(this.state);
+        return { state: this.snapshot(), cycle, replayed: false, needsReconfirmation: true };
+      }
       this.state.mode = "awaiting_payment";
-      this.addEvent("error", "Payment attempt failed", `${String(error)} No purchase was recorded.`);
+      this.addEvent("error", "Payment attempt failed", `${error instanceof Error ? error.message : "Wallet payment failed."} No purchase was recorded.`);
       await this.store.save(this.state);
       throw error;
     }
@@ -373,6 +393,9 @@ function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState
     directProof: state.directProof ?? initial.directProof,
   };
   migrated.metrics = { ...migrated.metrics, savings: migrated.metrics.savings ?? 0 };
+  migrated.events = migrated.events.map((event) => event.title === "Payment attempt failed" && event.detail.includes("Command failed:")
+    ? { ...event, detail: "The payment quote was no longer available. No purchase was recorded." }
+    : event);
   if (mode === "keeperhub" && persistedVersion < 3) {
     migrated.metrics = { ...migrated.metrics, purchases: 0, spend: 0 };
     migrated.cycles = migrated.cycles.map((cycle) => ({ ...cycle, amount: 0 }));

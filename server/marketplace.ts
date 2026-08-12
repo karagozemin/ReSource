@@ -37,6 +37,13 @@ export interface MarketplaceClient {
   pay(payment: PendingPayment): Promise<ExecutionResult>;
 }
 
+export class PaymentQuoteExpiredError extends Error {
+  constructor() {
+    super("Payment quote expired");
+    this.name = "PaymentQuoteExpiredError";
+  }
+}
+
 export class KeeperHubMarketplaceClient implements MarketplaceClient {
   private readonly apiUrl = process.env.KEEPERHUB_API_URL || "https://app.keeperhub.com/api";
   private readonly apiKey = process.env.KEEPERHUB_API_KEY;
@@ -191,9 +198,41 @@ export class KeeperHubMarketplaceClient implements MarketplaceClient {
   }
 
   private async runPayment<T>(args: string[]): Promise<T> {
-    const { stdout } = await execFileAsync("onchainos", ["payment", ...args], { maxBuffer: 1024 * 1024 });
-    const envelope = JSON.parse(stdout) as { ok: boolean; data?: T; error?: string };
-    if (!envelope.ok || !envelope.data) throw new Error(envelope.error ?? "Agent payment command failed");
-    return envelope.data;
+    try {
+      const { stdout } = await execFileAsync("onchainos", ["payment", ...args], { maxBuffer: 1024 * 1024 });
+      return parsePaymentOutput<T>(stdout);
+    } catch (error) {
+      const output = commandOutput(error);
+      if (output.includes("quote_expired_or_missing")) throw new PaymentQuoteExpiredError();
+      throw new Error(paymentErrorMessage(output), { cause: error });
+    }
   }
+}
+
+function parsePaymentOutput<T>(stdout: string): T {
+  const envelope = JSON.parse(stdout) as { ok: boolean; data?: T; error?: string };
+  if (!envelope.ok || !envelope.data) {
+    if (envelope.error?.includes("quote_expired_or_missing")) throw new PaymentQuoteExpiredError();
+    throw new Error(paymentErrorMessage(envelope.error ?? ""));
+  }
+  return envelope.data;
+}
+
+function commandOutput(error: unknown) {
+  if (!error || typeof error !== "object") return String(error);
+  const value = error as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
+  return [value.stdout?.toString(), value.stderr?.toString(), value.message].filter(Boolean).join("\n");
+}
+
+function paymentErrorMessage(output: string) {
+  try {
+    const line = output.split("\n").find((value) => value.trim().startsWith("{"));
+    if (line) {
+      const payload = JSON.parse(line) as { error?: string };
+      if (payload.error) return `Wallet payment failed: ${payload.error}`;
+    }
+  } catch {
+    // Fall through to a stable message without leaking the command line.
+  }
+  return "Wallet payment failed. No purchase was recorded.";
 }

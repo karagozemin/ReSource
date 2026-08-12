@@ -118,8 +118,9 @@ function App() {
     setPending(true);
     setMode("running");
     try {
-      const response = await apiRequest<{ state: AppState }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, { method: "POST" });
+      const response = await apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, { method: "POST" });
       applyState(response.state);
+      if (response.needsReconfirmation) setRequestError("Payment quote expired and was refreshed. Review the new terms, then authorize again.");
     } catch (error) {
       setMode("awaiting_payment");
       setRequestError(error instanceof Error ? error.message : String(error));

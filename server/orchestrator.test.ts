@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DemoExecutionAdapter } from "./adapters";
 import type { ExecutionAdapter } from "./adapters";
 import type { MarketplaceClient } from "./marketplace";
+import { PaymentQuoteExpiredError } from "./marketplace";
 import { ProcurementOrchestrator } from "./orchestrator";
 import { MemoryStateStore } from "./store";
 
@@ -94,6 +95,16 @@ describe("ProcurementOrchestrator", () => {
     expect(restored.snapshot().metrics.savings).toBe(0);
   });
 
+  it("removes raw wallet commands from persisted payment errors", async () => {
+    const store = new MemoryStateStore();
+    const state = orchestrator.snapshot();
+    state.events.unshift({ id: "raw-error", time: new Date().toISOString(), kind: "error", title: "Payment attempt failed", detail: "Error: Command failed: onchainos payment pay --secret-value" });
+    await store.save(state);
+    const restored = new ProcurementOrchestrator(store, new DemoExecutionAdapter());
+    await restored.initialize();
+    expect(restored.snapshot().events[0].detail).toBe("The payment quote was no longer available. No purchase was recorded.");
+  });
+
   it("preserves paid KeeperHub metrics across initialization", async () => {
     const store = new MemoryStateStore();
     const state = orchestrator.snapshot();
@@ -130,6 +141,38 @@ describe("ProcurementOrchestrator", () => {
     expect(result.state.metrics).toMatchObject({ purchases: 1, executions: 1, spend: 0.03 });
     expect(result.state.metrics.savings).toBeCloseTo(0.02);
     expect(result.state.pendingPayment).toBeNull();
+  });
+
+  it("refreshes an expired quote and requires a second authorization", async () => {
+    let quoteNumber = 0;
+    let payNumber = 0;
+    const marketplace = marketplaceStub();
+    marketplace.quote = async (provider) => ({
+      cycleId: "",
+      paymentId: `pay_${++quoteNumber}`,
+      providerId: provider.id,
+      acceptsIndex: 0,
+      amount: provider.price,
+      token: "USDC",
+      chainId: "8453",
+      chainName: "Base",
+      recipient: "0xmerchant",
+      createdAt: new Date().toISOString(),
+    });
+    marketplace.pay = async () => {
+      if (++payNumber === 1) throw new PaymentQuoteExpiredError();
+      return { executionId: "keeperhub-paid", success: true, latencyMs: 500, output: { riskLevel: "low", riskScore: 12, factors: [] }, transactionHash: "0xpayment", error: null, paid: true, amount: 0.03, paymentProtocol: "x402" };
+    };
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplace);
+    await buyer.initialize();
+    const firstQuote = await buyer.run("expiring-cycle");
+    const refresh = await buyer.confirmPayment(firstQuote.cycle.id);
+    expect("needsReconfirmation" in refresh && refresh.needsReconfirmation).toBe(true);
+    expect(refresh.state.pendingPayment?.paymentId).toBe("pay_2");
+    expect(refresh.state.metrics).toMatchObject({ purchases: 0, spend: 0 });
+    const paid = await buyer.confirmPayment(firstQuote.cycle.id);
+    expect(paid.cycle.status).toBe("completed");
+    expect(paid.state.metrics).toMatchObject({ purchases: 1, spend: 0.03 });
   });
 
   it("blocks a stale payment authorization after the order is paused", async () => {
