@@ -102,14 +102,16 @@ h2 { font-size: 17px; line-height: 1.3; }
 .danger-button:hover { background: #a83027; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
-.action-panel { padding: 20px; display: flex; flex-direction: column; justify-content: space-between; background: #fbfcfa; }
+.action-panel { min-width: 0; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; background: #fbfcfa; overflow: hidden; }
+.action-panel > * { min-width: 0; }
 .action-panel p { margin: 10px 0 17px; color: var(--muted); font-size: 10px; line-height: 1.55; }
 .demo-steps { display: grid; gap: 6px; }
 .demo-step { height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; display: flex; align-items: center; gap: 8px; color: #6d7974; font-size: 9px; background: white; }
 .demo-step > span { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; color: #6f7c76; background: #eef1ee; font: 500 8px/1 "DM Mono", monospace; }
 .demo-step.done { color: var(--green); border-color: #d2e6da; background: #f6fbf8; }
 .demo-step.done > span { color: white; background: var(--green); }
-.action-buttons { margin-top: 15px; display: flex; gap: 8px; }
+.action-buttons { min-width: 0; margin-top: 15px; display: flex; gap: 8px; }
+.action-buttons > .primary-button { min-width: 0; }
 .icon-button.in-panel { height: 36px; }
 .request-error { margin-top: 9px; padding: 8px 10px; border: 1px solid #efc7c2; border-radius: 5px; color: var(--red); background: var(--red-soft); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
 .payment-authorization { margin-top: 12px; padding: 11px; border: 1px solid #d9d3ad; border-radius: 6px; background: #fffdf1; }
@@ -117,9 +119,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .payment-authorization span, .direct-proof span { color: #68736e; font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .payment-authorization strong, .direct-proof strong { font: 500 11px/1 "DM Mono", monospace; }
 .payment-authorization dl { margin: 9px 0 0; display: grid; gap: 5px; }
-.payment-authorization dl div { display: flex; justify-content: space-between; gap: 12px; }
+.payment-authorization dl div { min-width: 0; display: grid; grid-template-columns: minmax(58px, auto) minmax(0, 1fr); gap: 12px; }
 .payment-authorization dt { color: #8a918d; font-size: 8px; }
-.payment-authorization dd { margin: 0; color: #4d5752; font: 500 8px/1.3 "DM Mono", monospace; text-align: right; }
+.payment-authorization dd { min-width: 0; margin: 0; color: #4d5752; font: 500 8px/1.3 "DM Mono", monospace; text-align: right; overflow-wrap: anywhere; }
 .direct-proof { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
 .direct-proof small { color: var(--muted); font-size: 8px; }
 .direct-proof a { color: var(--green); display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; text-decoration: none; }
@@ -221,6 +223,9 @@ footer > span { display: flex; align-items: center; gap: 6px; }
   .metric:last-child { grid-column: 1 / -1; border-bottom: 0; }
   .section-heading { gap: 8px; }
   .order-panel, .action-panel { padding: 16px; }
+  .action-panel p { overflow-wrap: anywhere; }
+  .payment-authorization > div, .direct-proof > div { align-items: flex-start; }
+  .payment-authorization strong, .direct-proof strong { text-align: right; white-space: normal; }
   .order-foot { align-items: flex-end; }
   .order-foot .secondary-button { flex: 0 0 auto; }
   .failover-copy { min-width: 0; }

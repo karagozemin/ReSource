@@ -112,6 +112,33 @@ The current code separates procurement rules and execution from React:
 - `server/store.ts`: atomic persistence;
 - `server/app.ts`: HTTP API.
 
+## Hackathon P0 status
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Persistent Standing Order | Complete | Policy, pause/resume and scheduled idempotency are persisted server-side |
+| Two competing providers | Complete | Live Sentinel and Atlas KeeperHub Marketplace listings |
+| Marketplace discovery | Complete | KeeperHub `search_workflows` MCP tool plus public-slug validation |
+| Deterministic selection | Complete | Price 40%, reliability 40%, latency 20% with hard eligibility rules |
+| Buyer Policy Guard | Complete | Price, daily budget, SLA, reliability and duplicate checks fail closed |
+| x402 payment | Complete | Quote and explicit authorization are separate; receipts persist amount and transaction hash |
+| Result verification | Complete | Risk schema and latency are verified before an execution counts as successful |
+| Automatic re-procurement | Complete | Controlled Sentinel SLA breach suspends it and prepares an Atlas quote without spending |
+| Direct KeeperHub execution | Ready for broadcast | Base Sepolia self-transfer passed KeeperHub simulation at 21,000 gas |
+| Audit and metrics | Complete | Cycles, evaluations, purchases, executions, recoveries, spend and savings |
+
+The dashboard currently holds an Atlas quote for `0.05 USDC` after a verified no-spend failover. The direct proof is simulated. Both state-changing actions remain behind their own explicit buttons.
+
+## Demo runbook
+
+1. Open the dashboard and show the live Marketplace provider metadata.
+2. Run procurement to create a policy-approved quote. No payment occurs at this stage.
+3. Use the warning icon beside authorization to simulate a provider SLA breach. ReSource suspends the provider and quotes the next eligible listing.
+4. Authorize one x402 purchase and show its settlement hash plus verified workflow output in the audit timeline.
+5. Show the already-passed Base Sepolia simulation, then broadcast the direct proof and open the returned explorer link.
+
+Steps 4 and 5 move funds or broadcast onchain and must each be explicitly approved.
+
 ## API
 
 | Method | Endpoint | Purpose |

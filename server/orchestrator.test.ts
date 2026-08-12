@@ -84,6 +84,32 @@ describe("ProcurementOrchestrator", () => {
     expect(result.cycle.amount).toBe(0);
   });
 
+  it("fills newly added metrics when loading an older version-four state", async () => {
+    const store = new MemoryStateStore();
+    const legacy = orchestrator.snapshot();
+    delete (legacy.metrics as Partial<typeof legacy.metrics>).savings;
+    await store.save(legacy);
+    const restored = new ProcurementOrchestrator(store, new DemoExecutionAdapter());
+    await restored.initialize();
+    expect(restored.snapshot().metrics.savings).toBe(0);
+  });
+
+  it("preserves paid KeeperHub metrics across initialization", async () => {
+    const store = new MemoryStateStore();
+    const state = orchestrator.snapshot();
+    state.executionMode = "keeperhub";
+    state.metrics = { ...state.metrics, purchases: 2, executions: 2, spend: 0.08, savings: 0.02 };
+    await store.save(state);
+    const keeperHubAdapter: ExecutionAdapter = {
+      mode: "keeperhub",
+      isReady: () => true,
+      execute: async () => ({ executionId: "unused", success: true, latencyMs: 1, output: {}, transactionHash: null, error: null }),
+    };
+    const restored = new ProcurementOrchestrator(store, keeperHubAdapter);
+    await restored.initialize();
+    expect(restored.snapshot().metrics).toMatchObject({ purchases: 2, executions: 2, spend: 0.08, savings: 0.02 });
+  });
+
   it("quotes a Marketplace purchase before moving funds", async () => {
     const marketplace = marketplaceStub();
     const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplace);

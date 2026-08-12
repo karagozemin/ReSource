@@ -364,11 +364,16 @@ function mergeProviderHistory(discovered: AppState["providers"], history: AppSta
 }
 
 function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState {
-  if (state.schemaVersion === 4 && state.pendingPayment !== undefined && state.directProof) return state;
+  const persistedVersion = Number((state as { schemaVersion?: number }).schemaVersion ?? 0);
   const initial = createInitialState(mode);
-  const migrated = { ...state, schemaVersion: 4 as const, pendingPayment: null, directProof: initial.directProof };
+  const migrated = {
+    ...state,
+    schemaVersion: 4 as const,
+    pendingPayment: state.pendingPayment ?? null,
+    directProof: state.directProof ?? initial.directProof,
+  };
   migrated.metrics = { ...migrated.metrics, savings: migrated.metrics.savings ?? 0 };
-  if (mode === "keeperhub") {
+  if (mode === "keeperhub" && persistedVersion < 3) {
     migrated.metrics = { ...migrated.metrics, purchases: 0, spend: 0 };
     migrated.cycles = migrated.cycles.map((cycle) => ({ ...cycle, amount: 0 }));
     migrated.events = migrated.events.map((event) => event.title === "KeeperHub execution complete"
