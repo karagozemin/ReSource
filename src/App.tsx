@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleDollarSign,
+  CircleDot,
   Clock3,
   ExternalLink,
   Gauge,
@@ -35,6 +36,33 @@ import type { ProcurementCycle } from "./types";
 import { ExecutionsView, OrdersView, ProvidersView, SettingsView } from "./WorkspaceViews";
 
 type ViewId = "overview" | "orders" | "providers" | "executions" | "settings";
+type FlowKind = "procurement" | "payment";
+type FlowStatus = "running" | "success" | "warning" | "error";
+type OperationFlow = {
+  kind: FlowKind;
+  phase: number;
+  status: FlowStatus;
+  resultTitle: string | null;
+  resultDetail: string | null;
+};
+
+const flowPhases: Record<FlowKind, string[]> = {
+  procurement: [
+    "Connect to KeeperHub Marketplace",
+    "Discover available service providers",
+    "Evaluate price, reliability, and latency",
+    "Apply Standing Order policy guard",
+    "Secure x402 payment quote",
+  ],
+  payment: [
+    "Revalidate network, amount, and recipient",
+    "Verify sponsored wallet session",
+    "Sign payment authorization",
+    "Submit settlement on Base",
+    "Await provider execution",
+    "Verify response schema and SLA",
+  ],
+};
 
 const viewTitles: Record<ViewId, { eyebrow: string; title: string }> = {
   overview: { eyebrow: "Autonomous procurement", title: "Operations overview" },
@@ -77,12 +105,16 @@ function App() {
   const [operatorDialogOpen, setOperatorDialogOpen] = useState(false);
   const [operatorKeyInput, setOperatorKeyInput] = useState("");
   const [operatorUnlocked, setOperatorUnlocked] = useState(() => Boolean(sessionStorage.getItem("resource-operator-key")));
+  const [operationFlow, setOperationFlow] = useState<OperationFlow | null>(null);
+  const operationFlowTimer = useRef<number | null>(null);
 
   useEffect(() => {
     void Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")])
       .then(([state, runtimeInfo]) => { applyState(state); setRuntime(runtimeInfo); })
       .catch((error) => setRequestError(error.message));
   }, []);
+
+  useEffect(() => () => stopOperationFlowTimer(), []);
 
   useEffect(() => {
     const showOperatorDialog = () => { setOperatorUnlocked(Boolean(sessionStorage.getItem("resource-operator-key"))); setOperatorDialogOpen(true); };
@@ -126,6 +158,32 @@ function App() {
     setOperation(null);
   }
 
+  function stopOperationFlowTimer() {
+    if (operationFlowTimer.current !== null) window.clearInterval(operationFlowTimer.current);
+    operationFlowTimer.current = null;
+  }
+
+  function startOperationFlow(kind: FlowKind) {
+    stopOperationFlowTimer();
+    setOperationFlow({ kind, phase: 0, status: "running", resultTitle: null, resultDetail: null });
+    operationFlowTimer.current = window.setInterval(() => {
+      setOperationFlow((current) => current && current.status === "running"
+        ? { ...current, phase: Math.min(current.phase + 1, flowPhases[current.kind].length - 2) }
+        : current);
+    }, kind === "payment" ? 1050 : 850);
+  }
+
+  function finishOperationFlow(status: Exclude<FlowStatus, "running">, resultTitle: string, resultDetail: string | null = null) {
+    stopOperationFlowTimer();
+    setOperationFlow((current) => current ? {
+      ...current,
+      phase: status === "success" ? flowPhases[current.kind].length - 1 : current.phase,
+      status,
+      resultTitle,
+      resultDetail,
+    } : current);
+  }
+
   function applyState(state: AppState) {
     setProviders(state.providers);
     setEvents(state.events);
@@ -145,17 +203,27 @@ function App() {
     if (busy || isPaused) return;
     setPending(true);
     setMode("running");
-    beginOperation("Evaluating provider market");
+    startOperationFlow("procurement");
     try {
-      const response = await apiRequest<{ state: AppState }>(`/api/standing-orders/${order.id}/run`, {
-        method: "POST",
-        headers: { "idempotency-key": crypto.randomUUID() },
-      });
+      const [response] = await Promise.all([
+        apiRequest<{ state: AppState }>(`/api/standing-orders/${order.id}/run`, {
+          method: "POST",
+          headers: { "idempotency-key": crypto.randomUUID() },
+        }),
+        wait(3200),
+      ]);
       applyState(response.state);
-      completeOperation(response.state.pendingPayment ? "Quote ready for authorization" : "Procurement cycle verified");
+      const quote = response.state.pendingPayment;
+      finishOperationFlow(
+        "success",
+        quote ? "Provider selected. Quote secured." : "Procurement cycle verified.",
+        quote ? `${quote.amount.toFixed(2)} ${quote.token} on ${quote.chainName} is ready for review.` : "The selected provider satisfied the Standing Order.",
+      );
     } catch (error) {
       setMode("ready");
-      failOperation(error);
+      const message = error instanceof Error ? error.message : String(error);
+      setRequestError(message);
+      finishOperationFlow("error", "Procurement stopped safely.", message);
     } finally { setPending(false); }
   }
 
@@ -178,18 +246,34 @@ function App() {
     if (!pendingPayment || busy) return;
     setPending(true);
     setMode("running");
-    beginOperation("Authorizing and verifying payment");
+    const confirmedCycleId = pendingPayment.cycleId;
+    startOperationFlow("payment");
     try {
-      const response = await apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, {
-        method: "POST",
-        headers: { "x-resource-payment-confirmation": pendingPayment.cycleId },
-      });
+      const [response] = await Promise.all([
+        apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${confirmedCycleId}/confirm-payment`, {
+          method: "POST",
+          headers: { "x-resource-payment-confirmation": confirmedCycleId },
+        }),
+        wait(4200),
+      ]);
       applyState(response.state);
-      completeOperation("Payment settled and result verified");
-      if (response.needsReconfirmation) setRequestError("Payment quote expired and was refreshed. Review the new terms, then authorize again.");
+      if (response.needsReconfirmation) {
+        const message = "The quote expired and was refreshed. Review the new terms before authorizing again.";
+        setRequestError(message);
+        finishOperationFlow("warning", "Fresh confirmation required.", message);
+      } else {
+        const cycle = response.state.cycles.find((item) => item.id === confirmedCycleId);
+        finishOperationFlow(
+          "success",
+          "Payment settled. Result verified.",
+          cycle?.transactionHash ? `Transaction ${shortValue(cycle.transactionHash)}` : "The provider response passed schema and SLA checks.",
+        );
+      }
     } catch (error) {
       setMode("awaiting_payment");
-      failOperation(error);
+      const message = error instanceof Error ? error.message : String(error);
+      setRequestError(message);
+      finishOperationFlow("error", "Payment was not completed.", message);
     } finally { setPending(false); }
   }
 
@@ -298,6 +382,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      {operationFlow && <OperationExperience flow={operationFlow} providerCount={providers.length} payment={pendingPayment} onClose={() => setOperationFlow(null)} />}
       {(operation || notice) && <div className={`operation-toast ${operation ? "working" : "success"}`} role="status"><span className="toast-icon">{operation ? <RefreshCw size={17} /> : <Check size={17} />}</span><span><strong>{operation ?? notice}</strong><small>{operation ? "ReSource is executing this operation" : "Operation completed successfully"}</small></span>{operation && <span className="toast-progress" />}</div>}
       {operatorDialogOpen && <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOperatorDialogOpen(false); }}><form className="operator-dialog" onSubmit={(event) => { event.preventDefault(); saveOperatorKey(); }}><div className="operator-dialog-icon"><LockKeyhole size={20} /></div><div><div className="eyebrow">Protected runtime</div><h2>Unlock operator controls</h2><p>Enter the Render operator key for this browser session.</p></div><label><span>Operator key</span><input autoFocus type="password" autoComplete="off" value={operatorKeyInput} onChange={(event) => setOperatorKeyInput(event.target.value)} /></label><div className="operator-dialog-actions">{operatorUnlocked && <button type="button" className="secondary-button" onClick={lockOperatorSession}>Lock session</button>}<button type="button" className="secondary-button" onClick={() => setOperatorDialogOpen(false)}>Cancel</button><button type="submit" className="primary-button fit" disabled={!operatorKeyInput.trim()}>Unlock</button></div></form></div>}
       <aside className="sidebar">
@@ -552,6 +637,78 @@ function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void
   );
 }
 
+function OperationExperience({ flow, providerCount, payment, onClose }: {
+  flow: OperationFlow;
+  providerCount: number;
+  payment: PendingPayment | null;
+  onClose: () => void;
+}) {
+  const phases = flowPhases[flow.kind];
+  const completed = flow.status === "success" ? phases.length : flow.phase;
+  const progress = flow.status === "success" ? 100 : Math.max(8, ((flow.phase + .45) / phases.length) * 100);
+  const isRunning = flow.status === "running";
+  const isPayment = flow.kind === "payment";
+
+  return (
+    <div className="execution-backdrop" role="dialog" aria-modal="true" aria-labelledby="execution-title">
+      <div className={`execution-experience ${flow.status}`}>
+        <header className="execution-head">
+          <div>
+            <span className="execution-live"><i />{isRunning ? "Live execution" : flow.status}</span>
+            <h2 id="execution-title">{isPayment ? "Settling x402 purchase" : "Sourcing the provider market"}</h2>
+          </div>
+          <div className="execution-head-meta">
+            <span>{isPayment ? payment?.chainName ?? "Base" : "KeeperHub"}</span>
+            <strong>{isPayment ? "OKX Agent Payments Protocol" : `${providerCount} providers`}</strong>
+          </div>
+        </header>
+
+        <div className="execution-body">
+          <div className={`execution-visual ${isPayment ? "payment" : "procurement"}`} aria-hidden="true">
+            <div className="execution-grid" />
+            <div className="execution-orbit orbit-one" />
+            <div className="execution-orbit orbit-two" />
+            <div className="execution-beam beam-one"><i /></div>
+            <div className="execution-beam beam-two"><i /></div>
+            <div className="execution-beam beam-three"><i /></div>
+            <span className="execution-node node-one">{isPayment ? "WALLET" : "ATLAS"}</span>
+            <span className="execution-node node-two">{isPayment ? "BASE" : "SENTINEL"}</span>
+            <span className="execution-node node-three">{isPayment ? "x402" : "POLICY"}</span>
+            <div className="execution-core">
+              <span className="execution-core-ring" />
+              {isPayment ? <WalletCards size={32} /> : <img src="/brand/resource-mark-192.png" alt="" />}
+            </div>
+            <div className="execution-signal"><Activity size={14} /><span>{isRunning ? phases[flow.phase] : flow.resultTitle}</span></div>
+          </div>
+
+          <div className="execution-sequence">
+            <div className="sequence-heading"><span>Execution sequence</span><strong>{Math.round(progress)}%</strong></div>
+            <div className="sequence-progress"><span style={{ width: `${progress}%` }} /></div>
+            <ol>
+              {phases.map((phase, index) => {
+                const done = index < completed || flow.status === "success";
+                const active = isRunning && index === flow.phase;
+                return <li className={`${done ? "done" : ""} ${active ? "active" : ""}`} key={phase}>
+                  <span>{done ? <Check size={13} /> : active ? <RefreshCw size={13} /> : <CircleDot size={11} />}</span>
+                  <div><strong>{phase}</strong><small>{done ? "Complete" : active ? "Processing live" : "Queued"}</small></div>
+                </li>;
+              })}
+            </ol>
+          </div>
+        </div>
+
+        <footer className="execution-foot">
+          <div className="execution-log">
+            <span>{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+            <p>{isRunning ? `Processing: ${phases[flow.phase]}` : flow.resultDetail ?? flow.resultTitle}</p>
+          </div>
+          {!isRunning && <button className="execution-close" onClick={onClose}>{flow.status === "success" ? "Continue" : "Review"}<ArrowRight size={15} /></button>}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function Metric({ icon, label, value, note, accent = false }: { icon: React.ReactNode; label: string; value: string; note: string; accent?: boolean }) {
   return <div className={`metric ${accent ? "accent" : ""}`}><div className="metric-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div></div>;
 }
@@ -567,6 +724,14 @@ function Step({ number, label, done }: { number: string; label: string; done: bo
 function readInitialView(): ViewId {
   const candidate = window.location.hash.slice(1);
   return Object.hasOwn(viewTitles, candidate) ? candidate as ViewId : "overview";
+}
+
+function wait(duration: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, duration));
+}
+
+function shortValue(value: string) {
+  return value.length > 22 ? `${value.slice(0, 10)}...${value.slice(-8)}` : value;
 }
 
 export default App;
