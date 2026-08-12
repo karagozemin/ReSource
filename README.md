@@ -6,63 +6,308 @@
 
 **The self-healing buyer for agent services.**
 
-ReSource gives an autonomous agent a persistent service requirement, called a Standing Order. It evaluates competing providers against price, budget, latency and observed reliability; buys from the best eligible provider; verifies the result; and automatically re-procures when the provider degrades.
+ReSource is a demand-side procurement runtime for agents. A persistent **Standing Order** defines the required service, price ceiling, spend limit, latency SLA, reliability floor, cadence and failover policy. ReSource discovers eligible KeeperHub Marketplace providers, selects one deterministically, obtains an x402 quote, requests payment authorization, verifies the paid result and replaces a provider when observed performance falls outside policy.
 
-> KeeperHub provides execution-level reliability. ReSource provides provider-level procurement reliability.
+KeeperHub supplies the Marketplace, paid workflow and onchain execution boundaries. ReSource owns the buyer-side decision: which provider is eligible, what may be spent, whether the returned result is acceptable and when the requirement must be sourced again.
 
-## Current milestone
+**[How it works](#procurement-loop) · [KeeperHub integration](#keeperhub-integration) · [Live proof](#live-execution-proof) · [Run locally](#run-locally) · [Full architecture](docs/ARCHITECTURE.md)**
 
-This repository currently ships a working product slice:
+> Current scope: one transaction-risk Standing Order, two live KeeperHub Marketplace listings, x402 settlement on Base, and a direct KeeperHub execution proof on Base Sepolia. The repository also includes a no-funds demo mode.
 
-- an operational dashboard that explains the product in one screen;
-- functional Orders, Providers, Executions and Settings workspaces;
-- server-validated policy editing, provider catalog refresh and operator requalification;
-- execution filters, settlement links and direct-proof visibility;
-- runtime scheduler controls that remain disabled by default;
-- a deterministic policy and provider scoring engine;
-- three competing transaction-risk providers;
-- price, daily budget, latency, reliability and paused-order guards;
-- a live purchase lifecycle simulation;
-- provider degradation, suspension and automatic failover from Sentinel Labs to Atlas Risk;
-- an audit timeline and observed metrics;
-- a Fastify orchestration API with atomic JSON persistence;
-- cycle records and mandatory idempotency keys that prevent duplicate execution;
-- a typed KeeperHub workflow adapter that fails closed when credentials or workflow IDs are absent;
-- an opt-in recurring trigger with interval-bucket idempotency;
-- unit tests for the critical procurement decisions.
+## Live execution proof
 
-The default mode is an explicitly labelled **demo adapter**. KeeperHub mode adds live Marketplace discovery, policy-gated x402 purchases through an agentic wallet, paid result verification, and a mandatory-simulation direct execution proof flow.
+These identifiers were returned by the implemented KeeperHub paths. The direct proof is the hackathon's public onchain transaction; the x402 rows are paid Marketplace service calls recorded by the buyer.
+
+| Evidence | Network | Amount | KeeperHub execution | Transaction |
+| --- | --- | ---: | --- | --- |
+| Direct execution proof | Base Sepolia (`84532`) | Zero-value self-transfer | `zw6ra484fc7g90jrqhhzk` | [`0x3c0124...e3c302`](https://sepolia.basescan.org/tx/0x3c0124ac14d8e18bb5bdcb65ad0196da463522fa562f3c7e5f5d55710ae3c302) |
+| Atlas Marketplace purchase | Base (`8453`) | 0.05 USDC | `mqg3c8bkevd9l4uw32bg9` | [`0x9fa010...ea3dbc`](https://basescan.org/tx/0x9fa0109c86a4c8c03a7dbb56291f832ef44af9b13b5b3d7204fd6cf9eeea3dbc) |
+| Atlas recovery purchase | Base (`8453`) | 0.05 USDC | `05g7axe7l67iaoy6f88ir` | [`0x474eb2...1e7916`](https://basescan.org/tx/0x474eb27192e8e78c460149e539d20582b05383a03222e5ef8f584666e81e7916) |
+
+**Demo video:** TODO before submission: add the public demo video URL.
+
+The direct path is implemented in [`server/direct-execution.ts`](server/direct-execution.ts). It fetches the KeeperHub wallet, simulates a fixed Base Sepolia self-transfer, requires a separate broadcast action, polls KeeperHub to a terminal state and stores the execution ID, hash and explorer URL. No transaction hash in this document is fabricated.
+
+## Why ReSource exists
+
+Most agents bind a service requirement to one provider in code. If that provider gets slower, becomes too expensive, returns malformed data or drops below an SLA, the requirement remains coupled to the failing integration.
+
+ReSource makes the requirement persistent and the supplier replaceable. Selection is repeated against the Standing Order and locally observed provider history. A provider failure changes future eligibility instead of becoming an isolated retry against the same endpoint.
+
+## Procurement loop
+
+```mermaid
+flowchart LR
+    SO[Standing Order due] --> D[Discover Marketplace providers]
+    D --> P[Apply hard policy filters]
+    P --> S[Score eligible providers]
+    S --> Q[Request x402 quote]
+    Q --> A[Operator authorizes payment]
+    A --> K[KeeperHub paid workflow]
+    K --> V{Schema and SLA valid?}
+    V -->|Yes| H[Update provider history]
+    V -->|No| F[Suspend provider]
+    H --> N[Wait for next cycle]
+    F --> R[Re-procure replacement]
+    R --> Q
+```
+
+The scheduler can trigger discovery and selection automatically. In the live Marketplace path it stops at `awaiting_payment`; every fresh or refreshed quote must be authorized from the dashboard. Demo mode executes without funds and can complete the loop unattended.
+
+## Standing Order
+
+The shipped order is defined in [`src/data/demo.ts`](src/data/demo.ts) and persisted server-side after edits:
+
+```json
+{
+  "id": "SO-001",
+  "service": "Transaction Risk Intelligence",
+  "description": "Assess transaction calldata risk before onchain execution.",
+  "intervalMinutes": 10,
+  "maxPrice": 0.06,
+  "dailyBudget": 2,
+  "maxLatencyMs": 20000,
+  "minReliability": 0.95,
+  "automaticFailover": true,
+  "status": "active"
+}
+```
+
+Before scoring, the buyer rejects a candidate when the order is paused, the provider is suspended, price exceeds `maxPrice`, accumulated spend plus price exceeds `dailyBudget`, latency exceeds `maxLatencyMs`, or observed reliability falls below `minReliability`.
+
+Eligible candidates receive this deterministic score:
+
+```text
+priceScore       = 1 - provider.price / order.maxPrice
+latencyScore     = 1 - provider.latencyMs / order.maxLatencyMs
+
+score = 0.40 * priceScore
+      + 0.40 * provider.reliability
+      + 0.20 * latencyScore
+```
+
+The score is rounded to three decimal places. Highest score wins; equal scores retain catalog order.
+
+## What ReSource is, and is not
+
+| System type | What it decides | ReSource's distinction |
+| --- | --- | --- |
+| Single-provider agent | How to call one configured service | ReSource can disqualify and replace the provider. |
+| x402 payment client | How to satisfy a payment challenge | ReSource decides whether the service and quote satisfy buyer policy before authorization. |
+| Marketplace | Which services are listed | KeeperHub owns listings; ReSource is the policy-controlled buyer of those listings. |
+| Budget guard | Whether one purchase is affordable | Budget is one hard filter inside discovery, scoring, verification and re-procurement. |
+| Transaction retry layer | How to land a chosen transaction | KeeperHub owns execution status; ReSource revisits which service should be bought. |
+
+## KeeperHub integration
+
+| KeeperHub surface | Implemented role | Source |
+| --- | --- | --- |
+| MCP | Opens a session and calls `search_workflows` / `get_workflow_listing` for configured public slugs. | [`server/marketplace.ts`](server/marketplace.ts) |
+| Marketplace | Supplies the live Sentinel and Atlas risk-provider listings and payable workflow endpoint. | [`server/marketplace.ts`](server/marketplace.ts) |
+| x402 + Agentic Wallet | Quotes the public workflow, then invokes `onchainos payment pay` only after explicit confirmation. | [`server/marketplace.ts`](server/marketplace.ts) |
+| Workflow REST API | Provides an organization-workflow adapter using execute and wait endpoints. It is implemented as a separate compatibility path, not the default Marketplace branch in `server/index.ts`. | [`server/adapters.ts`](server/adapters.ts) |
+| Direct execution | Simulates and broadcasts a zero-value Base Sepolia self-transfer, then polls for hash/link evidence. | [`server/direct-execution.ts`](server/direct-execution.ts) |
+| Execution records | ReSource persists KeeperHub execution IDs, x402 hashes, direct-proof evidence and errors in its own state record. | [`server/orchestrator.ts`](server/orchestrator.ts) |
+
+MPP is not implemented. Marketplace payments use x402 through the installed `onchainos` CLI.
+
+### Two reliability layers
+
+```mermaid
+flowchart TB
+    subgraph ReSource[ReSource: procurement reliability]
+        N[Standing Order] --> E[Eligibility and scoring]
+        E --> B[Budget and quote checks]
+        B --> V[Result verification]
+        V --> M[Observed provider history]
+        M --> E
+    end
+
+    subgraph KeeperHub[KeeperHub: service and execution boundary]
+        C[Marketplace catalog] --> W[Paid workflow]
+        W --> X[Execution ID and receipt]
+        DX[Direct execution] --> TX[Simulation, status and transaction hash]
+    end
+
+    E --> C
+    B --> W
+    X --> V
+```
+
+KeeperHub reports whether its workflow or direct execution completed. ReSource interprets that evidence in the context of a standing requirement: result shape, observed latency, budget, reliability and supplier eligibility.
+
+On a paid result failure, ReSource records the charge if the payment settled, marks the provider ineligible and starts a replacement cycle when `automaticFailover` is enabled. The replacement quote still requires a new authorization.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI[React operations UI] -->|HTTP| API[Fastify API]
+    Scheduler[Trigger engine] --> O[Procurement orchestrator]
+    API --> O
+    O --> Policy[Policy and scoring]
+    O --> Store[(Atomic JSON state)]
+    O --> Market[KeeperHub Marketplace client]
+    Market --> MCP[KeeperHub MCP]
+    Market --> Wallet[onchainos x402 payment]
+    O --> Direct[KeeperHub direct client]
+    MCP --> Providers[Paid provider workflows]
+    Wallet --> Providers
+    Direct --> Chain[Base Sepolia]
+```
+
+The orchestrator serializes every state-changing operation in one process. Procurement rules are shared by server and browser, while payment, credentials, persistence and KeeperHub calls remain server-only.
+
+For component contracts, sequence diagrams, failure behavior, state models and source mapping, read **[Full Architecture → docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+## Repository map
+
+```text
+ReSource/
+├── server/
+│   ├── app.ts                  # Fastify routes and CORS boundary
+│   ├── orchestrator.ts         # Serialized procurement and recovery lifecycle
+│   ├── marketplace.ts          # KeeperHub MCP discovery and x402 wallet calls
+│   ├── direct-execution.ts     # Simulate, broadcast and poll direct proof
+│   ├── adapters.ts             # Demo and organization-workflow adapters
+│   ├── scheduler.ts            # Interval trigger and stable schedule keys
+│   ├── store.ts                # Atomic JSON and in-memory test stores
+│   └── *.test.ts               # API, orchestration and scheduler tests
+├── src/
+│   ├── App.tsx                 # Dashboard state and operator actions
+│   ├── WorkspaceViews.tsx      # Orders, providers, executions and settings
+│   ├── lib/procurement.ts      # Eligibility, scoring and failure updates
+│   ├── data/demo.ts            # Reproducible order and provider fixtures
+│   └── types.ts                # Shared state and domain contracts
+├── docs/
+│   ├── ARCHITECTURE.md         # Complete system design
+│   ├── KEEPERHUB.md            # KeeperHub boundary notes
+│   └── KEEPERHUB_FRICTION_LOG.md
+├── data/                       # Local runtime.json (generated and gitignored)
+├── render.yaml                 # API deployment definition
+├── vercel.json                 # Vite web deployment definition
+└── package.json
+```
+
+This is a single npm package, not a monorepo. It contains no smart contracts or provider implementations; the providers are external KeeperHub Marketplace workflows.
 
 ## Run locally
 
-Requirements: Node.js 22.22+ or 24.15+ and npm.
+### Prerequisites
+
+- Node.js 24 and npm. Render is pinned to Node `24.15.0`.
+- For demo mode: no wallet, API key or funds.
+- For KeeperHub mode: a KeeperHub API key, buyer address, access to the configured Marketplace listings and `onchainos` CLI with a usable Agentic Wallet account.
+
+### Demo mode
 
 ```bash
-npm install
+npm ci
+cp .env.example .env
 npm run dev
 ```
 
-The command starts the API on port `8787` and the Vite dashboard on port `5173`. Open the Vite URL, then:
+The example environment defaults to `EXECUTION_MODE=demo`. Open `http://127.0.0.1:5173`, enter the workspace, then:
 
-1. Select **Run procurement cycle**. ReSource evaluates all providers, rejects Veridian on latency, and selects Sentinel.
-2. Select **Inject provider failure**. Sentinel times out and is suspended.
-3. Watch ReSource re-rank the market and automatically move the Standing Order to Atlas.
+1. Run a procurement cycle. Sentinel wins; Veridian is rejected by policy.
+2. Inject the controlled provider failure. Sentinel is suspended.
+3. Observe Atlas become the replacement and the recovery appear in metrics and audit history.
 
-## Deploy: Render API + Vercel web
+The API listens on `http://127.0.0.1:8787`. A direct API cycle requires an idempotency key:
 
-First import the repository into Vercel and complete an initial deployment to obtain its production URL. Then deploy the backend using `render.yaml`. In Render, set `FRONTEND_ORIGIN` to that Vercel URL (for example `https://resource.vercel.app`). The service binds to Render's `PORT` automatically and exposes `/api/health` for health checks.
-
-After Render provides the backend URL, set this Vercel project environment variable:
-
-```text
-VITE_API_BASE_URL=https://resource-api.onrender.com
+```bash
+curl -X POST http://127.0.0.1:8787/api/standing-orders/SO-001/run \
+  -H 'idempotency-key: local-demo-1'
 ```
 
-Redeploy Vercel so the build includes the API URL. For multiple Vercel domains, `FRONTEND_ORIGIN` accepts a comma-separated list. Do not add a trailing slash to either URL.
+### KeeperHub mode
 
-The free Render plan has an ephemeral filesystem, so demo state resets after a restart or redeploy. For persistent production state, use a paid persistent disk mounted at `/var/data` with `DATA_DIR=/var/data`, or replace the JSON store with a managed database. Keep `SCHEDULER_ENABLED=false` until durable storage and spending controls are configured.
+Set the required values in `.env`, ensure `onchainos` is installed and authenticated, then run the same development command:
 
-## Verify
+```text
+EXECUTION_MODE=keeperhub
+KEEPERHUB_API_URL=https://app.keeperhub.com/api
+KEEPERHUB_API_KEY=kh_...
+RESOURCE_BUYER_ADDRESS=0x...
+KEEPERHUB_MARKETPLACE_SLUGS=resource-sentinel-risk-provider,resource-atlas-risk-provider
+```
+
+```bash
+npm run dev
+```
+
+The live cycle discovers listings and produces a quote. Review its token, chain, recipient and amount in the dashboard before selecting **Authorize**. Direct proof uses a separate **Simulate proof** then **Broadcast proof** control.
+
+Recurring execution is disabled by default:
+
+```bash
+SCHEDULER_ENABLED=true npm run dev
+```
+
+Each interval bucket produces a stable key such as `schedule:SO-001:<bucket>`. Repeated polls and restarts replay the persisted cycle instead of creating another purchase. In KeeperHub mode the scheduler stops at payment authorization.
+
+## Environment variables
+
+| Variable | Required | Default / role |
+| --- | --- | --- |
+| `EXECUTION_MODE` | No | `demo`; use `keeperhub` for live integrations. Any other value resolves to demo. |
+| `PORT` | No | API port, default `8787`. |
+| `HOST` | No | API bind host, default `0.0.0.0`. |
+| `FRONTEND_ORIGIN` | Production | Comma-separated CORS allowlist. CORS is registered only when this is non-empty. |
+| `DATA_DIR` | No | State directory, default `./data`. |
+| `SCHEDULER_ENABLED` | No | Starts the in-process trigger only when exactly `true`; default `false`. |
+| `SCHEDULER_POLL_MS` | No | Trigger polling interval, default `30000`. |
+| `VITE_API_BASE_URL` | Split deployment | Browser-visible API origin baked into the Vite build; same-origin when omitted. |
+| `KEEPERHUB_API_URL` | No | Defaults to `https://app.keeperhub.com/api`. |
+| `KEEPERHUB_API_KEY` | KeeperHub mode | Backend bearer credential for MCP, workflow and direct execution calls. |
+| `RESOURCE_BUYER_ADDRESS` | Marketplace purchases | Sender supplied to the paid risk workflow. |
+| `KEEPERHUB_MARKETPLACE_SLUGS` | No | Defaults to the Sentinel and Atlas public slugs; readiness requires at least two. |
+| `RESOURCE_RISK_CONTRACT` | No | Risk-analysis input; defaults to the Base USDC contract in the example. |
+| `RESOURCE_RISK_CALLDATA` | No | Calldata passed for provider assessment; example defaults to encoded transfer data. |
+| `KEEPERHUB_WORKFLOW_ATLAS` | Organization adapter only | Atlas organization workflow ID. |
+| `KEEPERHUB_WORKFLOW_SENTINEL` | Organization adapter only | Sentinel organization workflow ID. |
+| `KEEPERHUB_WORKFLOW_VERIDIAN` | Organization adapter only | Veridian organization workflow ID. |
+
+Keep secrets in the backend `.env`; `.env` is ignored by Git. Never prefix KeeperHub credentials with `VITE_`.
+
+## API
+
+| Method | Endpoint | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/health` | Process health and execution mode. |
+| `GET` | `/api/state` | Standing Order, providers, cycles, metrics, pending quote and direct proof. |
+| `GET` | `/api/runtime` | Scheduler status. |
+| `POST` | `/api/standing-orders/:id/run` | Starts or replays a cycle; requires `idempotency-key`. |
+| `POST` | `/api/procurement/:cycleId/confirm-payment` | Re-checks policy and authorizes the pending x402 quote. |
+| `POST` | `/api/direct-proof/simulate` | Simulates the fixed Base Sepolia proof action. |
+| `POST` | `/api/direct-proof/broadcast` | Broadcasts only after saved simulation state. |
+| `POST` | `/api/providers/selected/failure` | Injects a controlled selected-provider SLA failure. |
+| `POST` | `/api/demo/failure` | Demo-only alias for controlled failure. |
+| `POST` | `/api/standing-orders/toggle` | Pauses or resumes the order. |
+| `PATCH` | `/api/standing-orders/policy` | Validates and persists editable constraints. |
+| `POST` | `/api/providers/refresh` | Refreshes Marketplace listings or demo catalog status. |
+| `POST` | `/api/providers/:providerId/requalify` | Clears observed history and restores eligibility. |
+| `PATCH` | `/api/runtime/scheduler` | Enables or disables the in-process trigger. |
+| `POST` | `/api/demo/reset` | Resets demo state only. |
+
+## Runtime evidence and metrics
+
+The server records procurement cycles, provider evaluations, paid purchases, verified executions, recoveries, spend and savings versus the highest-priced eligible provider. Provider history tracks attempts, moving-average latency, observed reliability and eligibility state. The UI reads these values from `/api/state`; the large numbers shown in the public landing-page visualization are illustrative copy, not runtime metrics.
+
+Live evidence is written to `data/runtime.json`. The file is intentionally ignored because it is mutable local state, so the public transaction links above are surfaced directly in this README.
+
+## Safety properties
+
+- Hard policy checks run before selection, and budget/order checks run again immediately before payment.
+- A quote that differs from the selected listing price is blocked. An expired quote requires a fresh operator authorization; changed terms are blocked.
+- State-changing orchestrator operations are serialized in-process, and cycle idempotency keys are persisted.
+- Purchases and spend increase only from a successful x402 settlement receipt in live mode.
+- Provider output must contain a valid `riskLevel`, a numeric `riskScore` from 0 to 100 and a `factors` array, and must arrive within the Standing Order SLA.
+- Provider failure immediately suspends that provider. Automatic failover never bypasses payment authorization.
+- Direct execution requires simulation before the separate broadcast action and uses a unique KeeperHub idempotency key.
+- Wallet command errors are reduced to stable messages before persistence; backend secrets are not returned in application state.
+
+## Testing
 
 ```bash
 npm test
@@ -70,158 +315,45 @@ npm run lint
 npm run build
 ```
 
-The API state is saved atomically to `data/runtime.json`. That file is local runtime data and is ignored by Git.
+Vitest covers hard eligibility filters, deterministic ranking, failure suspension, automatic replacement, result validation, quote-before-pay, expired-quote reconfirmation, payment accounting, idempotent API/scheduler behavior, policy validation, CORS and provider requalification. KeeperHub network calls and the external wallet CLI are replaced by test doubles; live integration evidence is not regenerated by the test suite.
 
-Recurring execution is disabled by default so a local start never spends unexpectedly. Enable it explicitly:
+## Deployment
 
-```bash
-SCHEDULER_ENABLED=true npm run dev
-```
+[`vercel.json`](vercel.json) builds the React/Vite client. [`render.yaml`](render.yaml) builds and starts the Fastify API in demo mode with `/api/health` as its health check. Set `VITE_API_BASE_URL` on Vercel and `FRONTEND_ORIGIN` on Render to connect the split deployment.
 
-Each interval uses a stable key such as `schedule:SO-001:<bucket>`. Restarts and repeated scheduler polls therefore replay the saved cycle instead of paying twice.
-
-## Procurement policy
-
-The demo Standing Order requires:
-
-| Constraint | Value |
-| --- | ---: |
-| Frequency | Every 10 minutes |
-| Maximum price | $0.06 per run |
-| Daily budget | $2.00 |
-| Maximum latency | 20 seconds |
-| Minimum reliability | 95% |
-| Automatic failover | Enabled |
-
-Eligible providers are ranked deterministically:
-
-```text
-score = price × 40% + observed reliability × 40% + latency × 20%
-```
-
-Hard policy rules run before scoring and fail closed. An unknown or invalid action must never proceed to payment.
-
-## Architecture
-
-```text
-Standing Order
-      |
-      v
-Policy Filter --> Deterministic Scoring --> Selected Provider
-      |                                      |
-      | rejected                             v
-      +------------------------------- Buyer Policy Guard
-                                             |
-                                             v
-                                  KeeperHub Adapter (demo)
-                                             |
-                                             v
-                                      Result Verifier
-                                        /          \
-                                   failure        success
-                                      |              |
-                                suspend + heal   update metrics
-```
-
-The current code separates procurement rules and execution from React:
-
-- `src/lib/procurement.ts`: eligibility, scoring, ranking and failure updates;
-- `src/data/demo.ts`: reproducible Standing Order and provider fixtures;
-- `src/App.tsx`: operational workflow and live state;
-- `src/lib/procurement.test.ts`: policy and recovery tests.
-- `server/orchestrator.ts`: serialized, idempotent procurement cycles and recovery;
-- `server/adapters.ts`: demo and KeeperHub workflow execution adapters;
-- `server/store.ts`: atomic persistence;
-- `server/app.ts`: HTTP API.
-
-## Hackathon P0 status
-
-| Requirement | Status | Evidence |
-| --- | --- | --- |
-| Persistent Standing Order | Complete | Policy, pause/resume and scheduled idempotency are persisted server-side |
-| Two competing providers | Complete | Live Sentinel and Atlas KeeperHub Marketplace listings |
-| Marketplace discovery | Complete | KeeperHub `search_workflows` MCP tool plus public-slug validation |
-| Deterministic selection | Complete | Price 40%, reliability 40%, latency 20% with hard eligibility rules |
-| Buyer Policy Guard | Complete | Price, daily budget, SLA, reliability and duplicate checks fail closed |
-| x402 payment | Complete | Quote and explicit authorization are separate; receipts persist amount and transaction hash |
-| Result verification | Complete | Risk schema and latency are verified before an execution counts as successful |
-| Automatic re-procurement | Complete | Controlled Sentinel SLA breach suspends it and prepares an Atlas quote without spending |
-| Direct KeeperHub execution | Complete | [Base Sepolia transaction](https://sepolia.basescan.org/tx/0x3c0124ac14d8e18bb5bdcb65ad0196da463522fa562f3c7e5f5d55710ae3c302) confirmed after KeeperHub simulation |
-| Audit and metrics | Complete | Cycles, evaluations, purchases, executions, recoveries, spend and savings |
-
-The persisted demo evidence includes two verified Atlas x402 purchases, a controlled Sentinel SLA failure, one automatic recovery and a confirmed Base Sepolia direct proof. New purchases and direct broadcasts remain behind separate explicit controls.
-
-## Demo runbook
-
-1. Open the dashboard and show the live Marketplace provider metadata.
-2. Open **Providers** and show the live listing metadata and observed performance.
-3. Open **Executions** and show the two x402 settlements, controlled failure and direct proof link.
-4. Use **Orders** to show the persisted budget, SLA and failover policy.
-5. Return to **Overview** and explain the completed recovery timeline. Run another paid cycle only when fresh evidence is required.
-
-The runbook above is read-only. Starting another paid cycle or broadcasting a new direct proof remains a separate, explicit action in the dashboard.
-
-## API
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/health` | Adapter health |
-| `GET` | `/api/state` | Dashboard state, cycles and metrics |
-| `GET` | `/api/runtime` | Runtime scheduler state |
-| `POST` | `/api/standing-orders/SO-001/run` | Execute a cycle; requires `idempotency-key` |
-| `POST` | `/api/standing-orders/toggle` | Pause or resume the order |
-| `PATCH` | `/api/standing-orders/policy` | Update the validated procurement policy |
-| `POST` | `/api/providers/refresh` | Refresh Marketplace provider discovery |
-| `POST` | `/api/providers/:id/requalify` | Clear observed provider history and requalify |
-| `PATCH` | `/api/runtime/scheduler` | Enable or disable the in-process scheduler |
-| `POST` | `/api/demo/failure` | Inject provider failure in demo mode |
-| `POST` | `/api/demo/reset` | Reset persisted demo state |
-
-## KeeperHub integration
-
-The server includes a KeeperHub workflow execution adapter based on the official REST endpoints:
-
-```text
-POST /api/workflows/{workflowId}/execute
-GET  /api/workflows/executions/{executionId}/wait?timeoutMs=60000
-```
-
-Enable it only after configuring `.env`:
-
-```bash
-EXECUTION_MODE=keeperhub
-KEEPERHUB_API_URL=https://app.keeperhub.com/api
-KEEPERHUB_API_KEY=kh_...
-KEEPERHUB_WORKFLOW_ATLAS=wf_...
-KEEPERHUB_WORKFLOW_SENTINEL=wf_...
-KEEPERHUB_WORKFLOW_VERIDIAN=wf_...
-```
-
-KeeperHub mode uses two distinct boundaries:
-
-1. Organization workflow execution through authenticated REST endpoints.
-2. Marketplace procurement through live MCP discovery and public paid workflow slugs.
-
-Marketplace cycles stop after quoting. The frontend displays full payment terms and requires explicit authorization before the backend invokes the agentic wallet. Payment/spend metrics are updated only from a successful settlement receipt. Direct execution uses simulation first and requires a separate broadcast action.
-
-Environment variable placeholders are documented in `.env.example`. Secrets must be consumed by a backend process, never by Vite client code.
+Render's free filesystem is ephemeral. Use a persistent disk with `DATA_DIR=/var/data` or replace the JSON store before relying on retained state. Keep the scheduler off until persistence, API access control and spending operations are production-ready.
 
 ## Known limitations
 
-- One JSON store supports a single local server process; multi-instance deployment needs transactional storage.
-- The recurring trigger runs in-process; production deployment should move it to a durable worker or scheduler.
-- The current wallet integration shells out to the installed `onchainos` CLI; production deployment should replace this with a long-running wallet service boundary.
-- Marketplace catalog search is paginated and currently scans recent listings before validating configured slugs.
-- Scheduler toggles are runtime-only; restart behavior is still controlled by `SCHEDULER_ENABLED`.
+- Only one Standing Order and one transaction-risk result schema are implemented.
+- The allowlisted live catalog currently requires at least two configured Marketplace slugs; provider workflows live outside this repository.
+- `dailyBudget` is checked against cumulative `metrics.spend`; there is no calendar-day ledger or rollover yet.
+- A failed paid result may already have settled before verification. Recovery sources a replacement but requires another explicit payment authorization.
+- Provider failure causes immediate `ineligible` status. The declared `degraded` state has no transition logic yet.
+- Tie-breaking relies on stable catalog order rather than an explicit secondary key.
+- JSON persistence and the mutation queue are safe only for one server process. There is no database transaction or distributed lock.
+- The scheduler is in-process and runtime toggles are not persisted; startup is controlled by `SCHEDULER_ENABLED`.
+- The HTTP control API has CORS filtering but no authentication or authorization. It must not be exposed as a production spending API in its current form.
+- The wallet integration starts an `onchainos` subprocess per quote/payment; there is no long-running wallet service boundary.
+- Direct execution is fixed to a Base Sepolia zero-value self-transfer. It proves the KeeperHub execution path, not arbitrary policy-derived writes.
+- MPP, smart contracts, multi-order tenancy and multi-chain procurement are not implemented.
 
-## Next build order
+## Hackathon alignment
 
-1. Record the demo video using the persisted paid, failure, recovery and direct-proof evidence.
-2. Publish the repository and add its public URL to the submission.
-3. Replace JSON persistence with SQLite before multi-process deployment.
-4. Prepare the separate onboarding bounty artifact from the captured KeeperHub integration friction.
-5. Submit the BUIDL and public transaction link to DoraHacks.
+| Criterion | Repository evidence |
+| --- | --- |
+| Real onchain execution | KeeperHub direct execution ID and confirmed Base Sepolia explorer transaction are linked above. |
+| KeeperHub integration | MCP discovery, public Marketplace workflow calls, x402 wallet payment, workflow receipts and direct execution are separate typed boundaries. |
+| Reliability | Persisted policy, deterministic selection, observed provider history, result verification, suspension and replacement are implemented and tested. |
+| Observability | Cycle IDs, execution IDs, payment hashes, direct-proof links, provider metrics and audit events are exposed in the operations UI. |
+| Originality | ReSource operates on the demand side: the Standing Order persists while providers remain replaceable. |
+| Utility | The shipped scenario procures transaction-risk assessment before an onchain action under explicit budget and SLA constraints. |
 
-## Name
+## Next steps
 
-The product name is **ReSource**. References to “ProcureAgent” in the source PRD are treated as the retired project codename.
+1. Add the public demo video URL and repository URL to the submission.
+2. Replace cumulative spend with a dated ledger and reserve budget at quote time.
+3. Add authenticated operator access and a transactional database before enabling unattended production scheduling.
+4. Generalize result validators and provider inputs beyond transaction-risk intelligence.
+
+The project is **ReSource**. “ProcureAgent” was an earlier codename and is not the current product name.

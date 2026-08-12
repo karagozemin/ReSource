@@ -45,7 +45,7 @@ The safe first-write flow is implemented in `server/direct-execution.ts`.
 - Status polling honors `X-Poll-Interval-Hint`.
 - The public transaction link is stored in application state.
 
-The simulation has passed with a 21,000 gas estimate. No direct proof transaction has been broadcast yet.
+The simulation passed with a 21,000 gas estimate. KeeperHub execution `zw6ra484fc7g90jrqhhzk` then confirmed the Base Sepolia proof transaction: [`0x3c0124...e3c302`](https://sepolia.basescan.org/tx/0x3c0124ac14d8e18bb5bdcb65ad0196da463522fa562f3c7e5f5d55710ae3c302).
 
 Official reference: https://docs.keeperhub.com/api/direct-execution
 
