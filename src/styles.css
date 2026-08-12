@@ -443,17 +443,17 @@ body { background: var(--paper); }
 .hero-scroll { position: absolute; left: clamp(24px, 3vw, 48px); bottom: 38px; display: flex; align-items: center; gap: 10px; color: #656b64; font: 500 8px/1 "DM Mono", monospace; transform: rotate(-90deg); transform-origin: left center; }
 .hero-scroll i { width: 42px; height: 1px; background: #555b54; }
 
-.system-section { min-height: 720px; padding: 112px clamp(24px, 7vw, 108px); color: #1a1c18; background: #efefea; }
+.system-section { min-height: 720px; padding: 112px clamp(24px, 7vw, 108px); color: #f2f1eb; background: #171a17; }
 .section-index { color: var(--coral); font: 500 9px/1 "DM Mono", monospace; }
 .system-heading { margin-top: 32px; display: grid; grid-template-columns: .7fr 1.3fr; gap: 50px; align-items: start; }
-.system-heading p { margin: 7px 0 0; color: #71766f; font-size: 12px; }
+.system-heading p { margin: 7px 0 0; color: #a1a79f; font-size: 12px; }
 .system-heading h2 { font-size: clamp(38px, 5vw, 72px); font-weight: 500; line-height: 1.02; }
-.system-flow { margin-top: 88px; border-top: 1px solid #cfd1ca; display: grid; grid-template-columns: repeat(4, 1fr); }
-.system-flow article { position: relative; min-height: 250px; padding: 26px 28px; border-right: 1px solid #cfd1ca; }
-.system-flow article:first-child { border-left: 1px solid #cfd1ca; }
-.system-flow article > span { color: #939890; font: 500 9px/1 "DM Mono", monospace; }
-.system-flow svg { position: absolute; right: 25px; top: 24px; width: 18px; color: #4e544d; }
-.system-flow h3 { margin: 93px 0 10px; font-size: 15px; }.system-flow p { margin: 0; color: #777c75; font-size: 11px; line-height: 1.65; }
+.system-flow { margin-top: 88px; border-top: 1px solid rgba(255,255,255,.16); display: grid; grid-template-columns: repeat(4, 1fr); }
+.system-flow article { position: relative; min-height: 250px; padding: 26px 28px; border-right: 1px solid rgba(255,255,255,.16); }
+.system-flow article:first-child { border-left: 1px solid rgba(255,255,255,.16); }
+.system-flow article > span { color: #747b73; font: 500 9px/1 "DM Mono", monospace; }
+.system-flow svg { position: absolute; right: 25px; top: 24px; width: 18px; color: #8f968d; }
+.system-flow h3 { margin: 93px 0 10px; font-size: 15px; }.system-flow p { margin: 0; color: #a1a79f; font-size: 11px; line-height: 1.65; }
 .system-flow article.accent { color: white; background: var(--coral); }.system-flow article.accent p, .system-flow article.accent > span { color: rgba(255,255,255,.7); }.system-flow article.accent svg { color: white; }
 
 .intro-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; color: #f7f6f0; background: #10120f; animation: introReveal 1.5s ease both; }
@@ -494,6 +494,70 @@ body { background: var(--paper); }
 .operator-dialog input:focus { border-color: var(--coral); box-shadow: 0 0 0 3px rgba(255,101,76,.1); }
 .operator-dialog-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
 
+/* Operations UI legibility */
+.app-shell .eyebrow { font-size: 11px; }
+.app-shell h2 { font-size: 18px; }
+.app-shell .brand-mark > span small { font-size: 9px; }
+.app-shell .nav-item { font-size: 13px; }
+.app-shell .nav-count, .app-shell .network-meta, .app-shell .back-to-site { font-size: 11px; }
+.app-shell .health-title { font-size: 14px; }
+.app-shell .health-detail { font-size: 12px; line-height: 1.45; }
+.app-shell .health-route { font-size: 11px; }
+.app-shell .metric span { font-size: 10px; }
+.app-shell .metric strong { font-size: 21px; }
+.app-shell .metric small { font-size: 10px; }
+.app-shell .state-badge { font-size: 11px; }
+.app-shell .order-description { font-size: 12px; line-height: 1.55; }
+.app-shell .constraint small { font-size: 10px; }
+.app-shell .constraint strong { font-size: 12px; }
+.app-shell .failover-copy strong { font-size: 11px; }
+.app-shell .failover-copy small { font-size: 10px; line-height: 1.35; }
+.app-shell .secondary-button, .app-shell .primary-button, .app-shell .danger-button { font-size: 11px; }
+.app-shell .action-panel p { font-size: 11px; }
+.app-shell .demo-step { min-height: 30px; height: auto; font-size: 10px; line-height: 1.3; }
+.app-shell .demo-step > span { font-size: 9px; }
+.app-shell .request-error, .app-shell .inline-notice { font-size: 10px; }
+.app-shell .payment-authorization span, .app-shell .direct-proof span { font-size: 10px; }
+.app-shell .payment-authorization strong, .app-shell .direct-proof strong { font-size: 12px; }
+.app-shell .payment-authorization dt { font-size: 10px; }
+.app-shell .payment-authorization dd { font-size: 9.5px; line-height: 1.4; }
+.app-shell .payment-authorization > small, .app-shell .direct-proof small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.app-shell .direct-proof a { font-size: 10px; }
+.app-shell .weight-legend span, .app-shell th { font-size: 9px; }
+.app-shell td { font-size: 11px; }
+.app-shell .provider-cell strong { font-size: 11px; }
+.app-shell .provider-cell small { font-size: 9px; line-height: 1.35; }
+.app-shell .score { font-size: 10px; }
+.app-shell .decision { font-size: 9px; }
+.app-shell .event-line strong { font-size: 11px; }
+.app-shell .event-line time { font-size: 9px; }
+.app-shell .timeline-event p { font-size: 10px; line-height: 1.5; }
+.app-shell footer, .app-shell .text-button { font-size: 10px; }
+.app-shell .field { font-size: 11px; }
+.app-shell .input-with-unit small { font-size: 10px; }
+.app-shell .toggle-field strong, .app-shell .setting-row strong { font-size: 11px; }
+.app-shell .toggle-field small, .app-shell .setting-row small { font-size: 10px; line-height: 1.4; }
+.app-shell .order-summary > p { font-size: 11px; }
+.app-shell .summary-list small { font-size: 9px; }
+.app-shell .summary-list strong { font-size: 11px; }
+.app-shell .provider-identity strong { font-size: 12px; }
+.app-shell .provider-identity small, .app-shell .provider-stat span { font-size: 9px; }
+.app-shell .provider-stat strong { font-size: 11px; }
+.app-shell .segmented button { font-size: 9px; }
+.app-shell .execution-row strong { font-size: 11px; }
+.app-shell .execution-row small, .app-shell .status-label { font-size: 9px; }
+.app-shell .cycle-amount { font-size: 10px; }
+.app-shell .empty-state { font-size: 11px; }
+.app-shell .detail-list dt { font-size: 9px; }
+.app-shell .detail-list dd { font-size: 10px; }
+.app-shell .proof-summary span { font-size: 9px; }
+.app-shell .proof-summary strong, .app-shell .proof-summary a, .app-shell .locked-value { font-size: 10px; }
+.app-shell .integration-state strong { font-size: 11px; }
+.app-shell .integration-state small { font-size: 10px; }
+.app-shell .live-clock, .app-shell .operator-button { font-size: 10px; }
+.app-shell .operation-toast strong { font-size: 11px; }
+.app-shell .operation-toast small { font-size: 10px; }
+
 @keyframes networkPulse { 0% { transform: scale(.7); opacity: 0; } 35% { opacity: 1; } 100% { transform: scale(1.25); opacity: 0; } }
 @keyframes routeFlow { 0% { left: 0; opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { left: 72%; opacity: 0; } }
 @keyframes hoverNode { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
@@ -509,14 +573,14 @@ body { background: var(--paper); }
   .landing-hero { min-height: 900px; grid-template-columns: 1fr; align-content: start; }
   .hero-copy { padding-top: 55px; }.hero-copy h1 { font-size: 88px; }.hero-statement { font-size: 42px; }
   .network-stage { position: absolute; right: 0; bottom: 10px; width: 58%; height: 550px; opacity: .78; }
-  .system-flow { grid-template-columns: repeat(2,1fr); }.system-flow article { border-bottom: 1px solid #cfd1ca; }
+  .system-flow { grid-template-columns: repeat(2,1fr); }.system-flow article { border-bottom: 1px solid rgba(255,255,255,.16); }
 }
 
 @media (max-width: 700px) {
   .landing-nav { height: 66px; grid-template-columns: 1fr auto; }.landing-nav nav { display: none; }.nav-launch { height: 34px; }
   .landing-hero { min-height: 820px; padding-top: 100px; display: block; }.hero-grid { mask-image: none; }.hero-copy h1 { font-size: 62px; }.hero-statement { margin-top: 22px; font-size: 34px; }.hero-description { font-size: 12px; }.hero-actions { align-items: flex-start; flex-direction: column; gap: 18px; }
   .network-stage { position: relative; width: 100%; height: 360px; margin-top: 24px; opacity: .72; }.network-stage::before { width: 180px; height: 180px; }.network-core { left: 43%; transform: translate(-50%,-50%) scale(.75); }.provider-node { min-width: 145px; height: 50px; }.node-a { right: 0; }.node-b { right: 0; }.node-c { left: 0; }.network-stats, .network-label, .recovery-chip { display: none; }.hero-scroll { display: none; }
-  .system-section { padding-block: 75px; }.system-heading { grid-template-columns: 1fr; gap: 18px; }.system-heading h2 { font-size: 38px; }.system-flow { margin-top: 50px; grid-template-columns: 1fr; }.system-flow article { min-height: 190px; border-left: 1px solid #cfd1ca; }.system-flow h3 { margin-top: 55px; }
+  .system-section { padding-block: 75px; }.system-heading { grid-template-columns: 1fr; gap: 18px; }.system-heading h2 { font-size: 38px; }.system-flow { margin-top: 50px; grid-template-columns: 1fr; }.system-flow article { min-height: 190px; border-left: 1px solid rgba(255,255,255,.16); }.system-flow h3 { margin-top: 55px; }
   .live-clock { display: none; }.operator-button { width: 36px; padding: 0; justify-content: center; font-size: 0; }.app-shell > main { padding-top: 20px; }
 }
 
