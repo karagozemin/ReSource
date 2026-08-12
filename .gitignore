@@ -3,6 +3,8 @@ dist
 .env
 .DS_Store
 coverage
+data/runtime.json
+data/*.tmp
 *.log
 *.tsbuildinfo
 vite.config.js

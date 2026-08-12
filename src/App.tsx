@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -25,11 +25,9 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { initialEvents, initialMetrics, initialProviders, standingOrder } from "./data/demo";
-import { applyProviderFailure, rankProviders } from "./lib/procurement";
-import type { TimelineEvent } from "./types";
-
-const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+import { initialEvents, initialMetrics, initialProviders, standingOrder as initialOrder } from "./data/demo";
+import { rankProviders } from "./lib/procurement";
+import type { AppState } from "./types";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -37,149 +35,91 @@ const money = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
 });
 
-const time = () =>
-  new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date());
+const eventTime = (value: string) => {
+  if (!value.includes("T")) return value;
+  return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value));
+};
 
 function App() {
   const [providers, setProviders] = useState(initialProviders);
   const [events, setEvents] = useState(initialEvents);
   const [metrics, setMetrics] = useState(initialMetrics);
+  const [order, setOrder] = useState(initialOrder);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<"ready" | "running" | "healthy" | "recovering">("ready");
-  const [isPaused, setIsPaused] = useState(false);
-  const runId = useRef(0);
+  const [executionMode, setExecutionMode] = useState<"demo" | "keeperhub">("demo");
+  const [integrationReady, setIntegrationReady] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void apiRequest<AppState>("/api/state").then(applyState).catch((error) => setRequestError(error.message));
+  }, []);
 
   const decisions = useMemo(
-    () => rankProviders(providers, { ...standingOrder, status: isPaused ? "paused" : "active" }, metrics.spend),
-    [providers, metrics.spend, isPaused],
+    () => rankProviders(providers, order, metrics.spend),
+    [providers, order, metrics.spend],
   );
 
   const selected = providers.find((provider) => provider.id === selectedId) ?? null;
-  const busy = mode === "running" || mode === "recovering";
+  const isPaused = order.status === "paused";
+  const busy = pending || mode === "running" || mode === "recovering";
 
-  function addEvent(kind: TimelineEvent["kind"], title: string, detail: string) {
-    setEvents((current) => [
-      { id: `${Date.now()}-${Math.random()}`, time: time(), kind, title, detail },
-      ...current,
-    ]);
+  function applyState(state: AppState) {
+    setProviders(state.providers);
+    setEvents(state.events);
+    setMetrics(state.metrics);
+    setOrder(state.order);
+    setSelectedId(state.selectedProviderId);
+    setMode(state.mode);
+    setExecutionMode(state.executionMode);
+    setIntegrationReady(state.integrationReady);
+    setRequestError(null);
   }
 
   async function runCycle() {
     if (busy || isPaused) return;
-    const currentRun = ++runId.current;
+    setPending(true);
     setMode("running");
-    setMetrics((current) => ({
-      ...current,
-      cycles: current.cycles + 1,
-      evaluations: current.evaluations + providers.length,
-    }));
-    addEvent("info", "Procurement cycle started", `Evaluating ${providers.length} marketplace workflows.`);
-    await wait(480);
-    if (currentRun !== runId.current) return;
-
-    const ranked = rankProviders(providers, standingOrder, metrics.spend);
-    const rejected = ranked.filter((decision) => !decision.eligible);
-    rejected.forEach((decision) =>
-      addEvent("warning", `${decision.provider.name} rejected`, decision.reason ?? "Policy constraint failed."),
-    );
-    await wait(520);
-    if (currentRun !== runId.current) return;
-
-    const winner = ranked.find((decision) => decision.eligible);
-    if (!winner) {
-      addEvent("error", "No eligible provider", "The cycle closed without payment. Policy failed safely.");
+    try {
+      const response = await apiRequest<{ state: AppState }>(`/api/standing-orders/${order.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": crypto.randomUUID() },
+      });
+      applyState(response.state);
+    } catch (error) {
       setMode("ready");
-      return;
-    }
-
-    setSelectedId(winner.provider.id);
-    addEvent(
-      "success",
-      `${winner.provider.name} selected`,
-      `${money.format(winner.provider.price)} per call · ${(winner.score! * 100).toFixed(1)} policy score.`,
-    );
-    await wait(560);
-    if (currentRun !== runId.current) return;
-    addEvent("success", "Buyer Policy Guard approved", "Budget, SLA and duplicate checks passed.");
-    await wait(500);
-    if (currentRun !== runId.current) return;
-    addEvent("info", "x402 payment authorized", `${money.format(winner.provider.price)} routed to the paid workflow.`);
-    await wait(540);
-    if (currentRun !== runId.current) return;
-    addEvent("success", "Result verified", "Wallet risk schema valid · latency within SLA.");
-    await wait(480);
-    if (currentRun !== runId.current) return;
-    addEvent("success", "KeeperHub execution complete", "Demo adapter confirmed the execution lifecycle. No real transaction sent.");
-    setMetrics((current) => ({
-      ...current,
-      purchases: current.purchases + 1,
-      executions: current.executions + 1,
-      spend: current.spend + winner.provider.price,
-    }));
-    setMode("healthy");
+      setRequestError(error instanceof Error ? error.message : String(error));
+    } finally { setPending(false); }
   }
 
   async function injectFailure() {
-    if (busy || selectedId !== "sentinel") return;
-    const currentRun = ++runId.current;
+    if (busy || !selectedId || executionMode !== "demo") return;
+    setPending(true);
     setMode("recovering");
-    addEvent("error", "Sentinel Labs timed out", "Provider exceeded the 20s Standing Order SLA.");
-    const failedProviders = providers.map((provider) =>
-      provider.id === "sentinel" ? applyProviderFailure(provider) : provider,
-    );
-    setProviders(failedProviders);
-    await wait(620);
-    if (currentRun !== runId.current) return;
-    addEvent("warning", "Provider automatically suspended", "Observed reliability fell below policy. Re-procurement started.");
-    setMetrics((current) => ({
-      ...current,
-      cycles: current.cycles + 1,
-      evaluations: current.evaluations + failedProviders.length,
-    }));
-    await wait(640);
-    if (currentRun !== runId.current) return;
-
-    const fallback = rankProviders(failedProviders, standingOrder, metrics.spend).find((decision) => decision.eligible);
-    if (!fallback) {
-      addEvent("error", "Recovery failed safely", "No replacement met the Standing Order policy.");
+    try {
+      const response = await apiRequest<{ state: AppState }>("/api/demo/failure", { method: "POST" });
+      applyState(response.state);
+    } catch (error) {
       setMode("ready");
-      return;
-    }
-
-    setSelectedId(fallback.provider.id);
-    addEvent("success", `${fallback.provider.name} took over`, "Failover completed without operator approval.");
-    await wait(520);
-    if (currentRun !== runId.current) return;
-    addEvent("success", "Recovery execution verified", "Replacement workflow passed verification through the demo adapter.");
-    setMetrics((current) => ({
-      ...current,
-      purchases: current.purchases + 1,
-      executions: current.executions + 1,
-      recoveries: current.recoveries + 1,
-      spend: current.spend + fallback.provider.price,
-    }));
-    setMode("healthy");
+      setRequestError(error instanceof Error ? error.message : String(error));
+    } finally { setPending(false); }
   }
 
-  function resetDemo() {
-    runId.current += 1;
-    setProviders(initialProviders);
-    setEvents(initialEvents);
-    setMetrics(initialMetrics);
-    setSelectedId(null);
-    setMode("ready");
-    setIsPaused(false);
+  async function resetDemo() {
+    if (executionMode !== "demo") return;
+    setPending(true);
+    try { applyState(await apiRequest<AppState>("/api/demo/reset", { method: "POST" })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
   }
 
-  function togglePause() {
+  async function togglePause() {
     if (busy) return;
-    setIsPaused((current) => !current);
-    addEvent(isPaused ? "success" : "warning", isPaused ? "Standing order resumed" : "Standing order paused", isPaused ? "Future cycles are enabled." : "New payments are blocked until resumed.");
+    setPending(true);
+    try { applyState(await apiRequest<AppState>("/api/standing-orders/toggle", { method: "POST" })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
   }
 
   return (
@@ -197,8 +137,8 @@ function App() {
           <button className="nav-item" title="Settings"><Settings2 size={18} /><span>Settings</span></button>
         </nav>
         <div className="sidebar-foot">
-          <div className="network-line"><span className="status-dot" /> Demo adapter</div>
-          <div className="network-meta">No funds at risk</div>
+          <div className="network-line"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo adapter" : "KeeperHub adapter"}</div>
+          <div className="network-meta">{executionMode === "demo" ? "No funds at risk" : integrationReady ? "Credentials loaded" : "Configuration required"}</div>
         </div>
       </aside>
 
@@ -209,8 +149,8 @@ function App() {
             <h1>Operations overview</h1>
           </div>
           <div className="top-actions">
-            <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>
-            <div className="adapter-pill"><span className="status-dot" /> Demo mode <ChevronDown size={14} /></div>
+            {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
+            <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : "KeeperHub"} <ChevronDown size={14} /></div>
           </div>
         </header>
 
@@ -236,24 +176,24 @@ function App() {
           <Metric icon={<Bot />} label="Evaluations" value={metrics.evaluations.toString()} note="provider decisions" />
           <Metric icon={<CheckCircle2 />} label="Purchases" value={metrics.purchases.toString()} note="verified results" />
           <Metric icon={<HeartPulse />} label="Recoveries" value={metrics.recoveries.toString()} note="automatic failovers" accent />
-          <Metric icon={<CircleDollarSign />} label="Spend" value={money.format(metrics.spend)} note={`of ${money.format(standingOrder.dailyBudget)} daily`} />
+          <Metric icon={<CircleDollarSign />} label="Spend" value={money.format(metrics.spend)} note={`of ${money.format(order.dailyBudget)} daily`} />
         </section>
 
         <div className="content-grid">
           <section className="order-panel" aria-labelledby="order-title">
             <div className="section-heading">
               <div>
-                <div className="eyebrow">Standing order · {standingOrder.id}</div>
-                <h2 id="order-title">{standingOrder.service}</h2>
+                <div className="eyebrow">Standing order · {order.id}</div>
+                <h2 id="order-title">{order.service}</h2>
               </div>
               <span className={`state-badge ${isPaused ? "paused" : "active"}`}><span />{isPaused ? "Paused" : "Active"}</span>
             </div>
-            <p className="order-description">{standingOrder.description}</p>
+            <p className="order-description">{order.description}</p>
             <div className="constraint-grid">
-              <Constraint icon={<Clock3 />} label="Frequency" value={`Every ${standingOrder.intervalMinutes} min`} />
-              <Constraint icon={<CircleDollarSign />} label="Max price" value={`${money.format(standingOrder.maxPrice)} / run`} />
-              <Constraint icon={<Gauge />} label="Max latency" value={`${standingOrder.maxLatencyMs / 1000} seconds`} />
-              <Constraint icon={<ShieldCheck />} label="Reliability" value={`≥ ${standingOrder.minReliability * 100}%`} />
+              <Constraint icon={<Clock3 />} label="Frequency" value={`Every ${order.intervalMinutes} min`} />
+              <Constraint icon={<CircleDollarSign />} label="Max price" value={`${money.format(order.maxPrice)} / run`} />
+              <Constraint icon={<Gauge />} label="Max latency" value={`${order.maxLatencyMs / 1000} seconds`} />
+              <Constraint icon={<ShieldCheck />} label="Reliability" value={`≥ ${order.minReliability * 100}%`} />
             </div>
             <div className="order-foot">
               <div className="failover-copy"><Sparkles size={16} /><span><strong>Self-healing enabled</strong><small>Replace providers when policy is breached</small></span></div>
@@ -275,13 +215,14 @@ function App() {
               <Step number="03" label="Verify recovery" done={metrics.recoveries > 0} />
             </div>
             <div className="action-buttons">
-              {selectedId === "sentinel" ? (
+              {selectedId === "sentinel" && executionMode === "demo" ? (
                 <button className="danger-button" onClick={injectFailure} disabled={busy}><TriangleAlert size={17} />Inject provider failure</button>
               ) : (
                 <button className="primary-button" onClick={runCycle} disabled={busy || isPaused}><Play size={17} />{busy ? "Cycle running" : selectedId === "atlas" ? "Run another cycle" : "Run procurement cycle"}</button>
               )}
-              <button className="icon-button in-panel" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>
+              {executionMode === "demo" && <button className="icon-button in-panel" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             </div>
+            {requestError && <div className="request-error" role="alert">{requestError}</div>}
           </section>
         </div>
 
@@ -299,8 +240,8 @@ function App() {
                     <tr key={decision.provider.id} className={selectedId === decision.provider.id ? "selected-row" : ""}>
                       <td><div className="provider-cell"><span className={`provider-logo logo-${decision.provider.id}`}>{decision.provider.name.charAt(0)}</span><span><strong>{decision.provider.name}</strong><small>{decision.provider.workflow}</small></span></div></td>
                       <td>{money.format(decision.provider.price)}</td>
-                      <td><span className={decision.provider.reliability < standingOrder.minReliability ? "negative" : ""}>{(decision.provider.reliability * 100).toFixed(decision.provider.reliability * 100 % 1 ? 1 : 0)}%</span></td>
-                      <td><span className={decision.provider.latencyMs > standingOrder.maxLatencyMs ? "negative" : ""}>{(decision.provider.latencyMs / 1000).toFixed(1)}s</span></td>
+                      <td><span className={decision.provider.reliability < order.minReliability ? "negative" : ""}>{(decision.provider.reliability * 100).toFixed(decision.provider.reliability * 100 % 1 ? 1 : 0)}%</span></td>
+                      <td><span className={decision.provider.latencyMs > order.maxLatencyMs ? "negative" : ""}>{(decision.provider.latencyMs / 1000).toFixed(1)}s</span></td>
                       <td>{decision.score ? <span className="score"><span style={{ width: `${decision.score * 100}%` }} />{(decision.score * 100).toFixed(1)}</span> : <span className="muted">—</span>}</td>
                       <td>{selectedId === decision.provider.id ? <span className="decision selected"><Check size={13} />Selected</span> : decision.eligible ? <span className="decision eligible">#{index + 1} Eligible</span> : <span className="decision rejected"><X size={13} />{decision.reason}</span>}</td>
                     </tr>
@@ -319,7 +260,7 @@ function App() {
               {events.map((event) => (
                 <div className="timeline-event" key={event.id}>
                   <span className={`event-mark ${event.kind}`} />
-                  <div><div className="event-line"><strong>{event.title}</strong><time>{event.time}</time></div><p>{event.detail}</p></div>
+                  <div><div className="event-line"><strong>{event.title}</strong><time>{eventTime(event.time)}</time></div><p>{event.detail}</p></div>
                 </div>
               ))}
             </div>
@@ -327,7 +268,7 @@ function App() {
         </div>
 
         <footer>
-          <span><WalletCards size={15} /> KeeperHub execution adapter: <strong>demo</strong></span>
+          <span><WalletCards size={15} /> Execution adapter: <strong>{executionMode}</strong></span>
           <button className="text-button">Integration notes <ExternalLink size={14} /></button>
         </footer>
       </main>
@@ -348,3 +289,10 @@ function Step({ number, label, done }: { number: string; label: string; done: bo
 }
 
 export default App;
+
+async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(payload?.error ?? `Request failed with ${response.status}`);
+  return payload as T;
+}

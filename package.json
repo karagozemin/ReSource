@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n api,web -c green,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "start": "tsx server/index.ts",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -12,6 +15,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "fastify": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -23,11 +27,13 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "concurrently": "latest",
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
     "jsdom": "latest",
+    "tsx": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vitest": "latest"

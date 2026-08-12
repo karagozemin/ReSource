@@ -38,6 +38,7 @@ button:focus-visible { outline: 3px solid rgba(13, 122, 80, .25); outline-offset
 .sidebar-foot { margin-top: auto; padding: 14px 10px 4px; border-top: 1px solid rgba(255,255,255,.1); }
 .network-line { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
 .status-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: #66d494; box-shadow: 0 0 0 3px rgba(102,212,148,.12); }
+.status-dot.offline { background: #d36a60; box-shadow: 0 0 0 3px rgba(211,106,96,.12); }
 .network-meta { margin-top: 5px; padding-left: 15px; color: #84918c; font-size: 10px; }
 
 main { min-width: 0; padding: 26px 30px 16px; }
@@ -110,6 +111,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .demo-step.done > span { color: white; background: var(--green); }
 .action-buttons { margin-top: 15px; display: flex; gap: 8px; }
 .icon-button.in-panel { height: 36px; }
+.request-error { margin-top: 9px; padding: 8px 10px; border: 1px solid #efc7c2; border-radius: 5px; color: var(--red); background: var(--red-soft); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
 
 .lower-grid { margin-top: 16px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, .8fr); gap: 16px; align-items: start; }
 .providers-section, .timeline-section { min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: white; overflow: hidden; }

@@ -48,3 +48,31 @@ export type Metrics = {
   executions: number;
   spend: number;
 };
+
+export type CycleStatus = "completed" | "failed" | "policy_blocked" | "no_provider";
+
+export type ProcurementCycle = {
+  id: string;
+  idempotencyKey: string;
+  standingOrderId: string;
+  startedAt: string;
+  completedAt: string;
+  selectedProviderId: string | null;
+  status: CycleStatus;
+  amount: number;
+  executionId: string | null;
+  transactionHash: string | null;
+  error: string | null;
+};
+
+export type AppState = {
+  order: StandingOrder;
+  providers: Provider[];
+  events: TimelineEvent[];
+  metrics: Metrics;
+  cycles: ProcurementCycle[];
+  selectedProviderId: string | null;
+  mode: "ready" | "running" | "healthy" | "recovering";
+  executionMode: "demo" | "keeperhub";
+  integrationReady: boolean;
+};
