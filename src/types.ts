@@ -18,6 +18,9 @@ export type Provider = {
   id: string;
   name: string;
   workflow: string;
+  workflowId?: string;
+  marketplaceSlug?: string;
+  source?: "fixture" | "marketplace";
   price: number;
   reliability: number;
   latencyMs: number;
@@ -47,9 +50,36 @@ export type Metrics = {
   recoveries: number;
   executions: number;
   spend: number;
+  savings: number;
 };
 
-export type CycleStatus = "completed" | "failed" | "policy_blocked" | "no_provider";
+export type CycleStatus = "awaiting_payment" | "completed" | "failed" | "policy_blocked" | "no_provider";
+
+export type PendingPayment = {
+  cycleId: string;
+  paymentId: string;
+  providerId: string;
+  acceptsIndex: number;
+  amount: number;
+  token: string;
+  chainId: string;
+  chainName: string;
+  recipient: string;
+  createdAt: string;
+};
+
+export type DirectProof = {
+  status: "ready" | "simulated" | "completed" | "failed";
+  chainId: string;
+  network: string;
+  from: string | null;
+  to: string | null;
+  gasEstimate: string | null;
+  executionId: string | null;
+  transactionHash: string | null;
+  transactionLink: string | null;
+  error: string | null;
+};
 
 export type ProcurementCycle = {
   id: string;
@@ -60,20 +90,23 @@ export type ProcurementCycle = {
   selectedProviderId: string | null;
   status: CycleStatus;
   amount: number;
+  paymentProtocol?: "x402" | null;
   executionId: string | null;
   transactionHash: string | null;
   error: string | null;
 };
 
 export type AppState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   order: StandingOrder;
   providers: Provider[];
   events: TimelineEvent[];
   metrics: Metrics;
   cycles: ProcurementCycle[];
   selectedProviderId: string | null;
-  mode: "ready" | "running" | "healthy" | "recovering";
+  mode: "ready" | "running" | "awaiting_payment" | "healthy" | "recovering";
   executionMode: "demo" | "keeperhub";
   integrationReady: boolean;
+  pendingPayment: PendingPayment | null;
+  directProof: DirectProof;
 };

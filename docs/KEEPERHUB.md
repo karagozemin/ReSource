@@ -17,31 +17,42 @@ Official reference: https://docs.keeperhub.com/api/workflows and https://docs.ke
 
 ## 2. Marketplace paid workflow call
 
-Not implemented yet.
+Implemented in `server/marketplace.ts` and `server/orchestrator.ts`.
 
-- Discover workflows through KeeperHub's Marketplace/MCP surfaces.
-- Call a public resource by slug at `/api/mcp/workflows/<slug>/call`.
-- Receive an x402 or MPP payment challenge.
-- Pay using an agentic wallet and retry the request with payment proof.
-- Record payment protocol, settlement transaction and workflow receipt separately.
+- Discover live listings through KeeperHub's `search_workflows` MCP tool.
+- Normalize the allowlisted Sentinel and Atlas listings with observed local metrics.
+- Quote the selected public slug through `/api/mcp/workflows/<slug>/call`.
+- Stop in `awaiting_payment` and show network, token, amount, provider and recipient.
+- After explicit authorization, pay with the OKX Agentic Wallet CLI and verify the paid result.
+- Persist x402 settlement hash, KeeperHub execution ID, amount and protocol separately.
+
+Active providers:
+
+| Provider | Slug | Price |
+| --- | --- | ---: |
+| Sentinel | `resource-sentinel-risk-provider` | 0.03 USDC |
+| Atlas | `resource-atlas-risk-provider` | 0.05 USDC |
 
 Official reference: https://docs.keeperhub.com/workflows/marketplace
 
 ## 3. Direct onchain execution
 
-Not implemented until an explicit, low-risk demo action and chain are selected.
+The safe first-write flow is implemented in `server/direct-execution.ts`.
 
-- Build an allowlisted action server-side.
-- Simulate or validate it before submission.
-- Apply the Buyer Policy Guard.
-- Send through `/api/execute/*` with the KeeperHub organization key.
-- Poll `/api/execute/{executionId}/status` using `X-Poll-Interval-Hint`.
-- Store the public transaction link as primary hackathon proof.
+- The allowlisted proof action is a zero-value self-transfer on Base Sepolia.
+- Simulation is mandatory before broadcast and uses the identical request body.
+- Broadcast requires a separate user action and a unique idempotency key.
+- Status polling honors `X-Poll-Interval-Hint`.
+- The public transaction link is stored in application state.
+
+The simulation has passed with a 21,000 gas estimate. No direct proof transaction has been broadcast yet.
 
 Official reference: https://docs.keeperhub.com/api/direct-execution
 
 ## Fail-closed behavior
 
 `EXECUTION_MODE=keeperhub` does not fall back to demo execution. Missing credentials or a missing provider workflow ID returns an error and records no purchase or spend.
+
+Only a successful payment receipt increments purchases/spend. A successful organization workflow is recorded as an execution, not a Marketplace purchase.
 
 Secrets are read only by the backend process. Never prefix them with `VITE_`, expose them through `/api/state`, or log authorization headers.

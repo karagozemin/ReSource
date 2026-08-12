@@ -3,7 +3,7 @@ import { initialEvents, initialMetrics, initialProviders, standingOrder } from "
 
 export function createInitialState(executionMode: AppState["executionMode"]): AppState {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     order: structuredClone(standingOrder),
     providers: structuredClone(initialProviders),
     events: structuredClone(initialEvents),
@@ -13,5 +13,18 @@ export function createInitialState(executionMode: AppState["executionMode"]): Ap
     mode: "ready",
     executionMode,
     integrationReady: executionMode === "demo",
+    pendingPayment: null,
+    directProof: {
+      status: "ready",
+      chainId: "84532",
+      network: "Base Sepolia",
+      from: null,
+      to: null,
+      gasEstimate: null,
+      executionId: null,
+      transactionHash: null,
+      transactionLink: null,
+      error: null,
+    },
   };
 }

@@ -27,7 +27,8 @@ import {
 } from "lucide-react";
 import { initialEvents, initialMetrics, initialProviders, standingOrder as initialOrder } from "./data/demo";
 import { rankProviders } from "./lib/procurement";
-import type { AppState } from "./types";
+import type { AppState, DirectProof, PendingPayment } from "./types";
+import type { ProcurementCycle } from "./types";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -46,11 +47,14 @@ function App() {
   const [metrics, setMetrics] = useState(initialMetrics);
   const [order, setOrder] = useState(initialOrder);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [mode, setMode] = useState<"ready" | "running" | "healthy" | "recovering">("ready");
+  const [mode, setMode] = useState<AppState["mode"]>("ready");
   const [executionMode, setExecutionMode] = useState<"demo" | "keeperhub">("demo");
   const [integrationReady, setIntegrationReady] = useState(true);
   const [pending, setPending] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
+  const [directProof, setDirectProof] = useState<DirectProof>({ status: "ready", chainId: "84532", network: "Base Sepolia", from: null, to: null, gasEstimate: null, executionId: null, transactionHash: null, transactionLink: null, error: null });
+  const [cycles, setCycles] = useState<ProcurementCycle[]>([]);
 
   useEffect(() => {
     void apiRequest<AppState>("/api/state").then(applyState).catch((error) => setRequestError(error.message));
@@ -74,6 +78,9 @@ function App() {
     setMode(state.mode);
     setExecutionMode(state.executionMode);
     setIntegrationReady(state.integrationReady);
+    setPendingPayment(state.pendingPayment);
+    setDirectProof(state.directProof);
+    setCycles(state.cycles);
     setRequestError(null);
   }
 
@@ -94,16 +101,37 @@ function App() {
   }
 
   async function injectFailure() {
-    if (busy || !selectedId || executionMode !== "demo") return;
+    if (busy || !selectedId) return;
     setPending(true);
     setMode("recovering");
     try {
-      const response = await apiRequest<{ state: AppState }>("/api/demo/failure", { method: "POST" });
+      const response = await apiRequest<{ state: AppState }>(executionMode === "demo" ? "/api/demo/failure" : "/api/providers/selected/failure", { method: "POST" });
       applyState(response.state);
     } catch (error) {
       setMode("ready");
       setRequestError(error instanceof Error ? error.message : String(error));
     } finally { setPending(false); }
+  }
+
+  async function confirmPayment() {
+    if (!pendingPayment || busy) return;
+    setPending(true);
+    setMode("running");
+    try {
+      const response = await apiRequest<{ state: AppState }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, { method: "POST" });
+      applyState(response.state);
+    } catch (error) {
+      setMode("awaiting_payment");
+      setRequestError(error instanceof Error ? error.message : String(error));
+    } finally { setPending(false); }
+  }
+
+  async function runDirectProof(action: "simulate" | "broadcast") {
+    if (busy) return;
+    setPending(true);
+    try { applyState(await apiRequest<AppState>(`/api/direct-proof/${action}`, { method: "POST" })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
   }
 
   async function resetDemo() {
@@ -132,7 +160,7 @@ function App() {
         <nav className="nav-list" aria-label="Primary navigation">
           <button className="nav-item active" title="Overview"><LayoutDashboard size={18} /><span>Overview</span></button>
           <button className="nav-item" title="Standing orders"><History size={18} /><span>Orders</span><span className="nav-count">1</span></button>
-          <button className="nav-item" title="Providers"><Bot size={18} /><span>Providers</span><span className="nav-count">3</span></button>
+          <button className="nav-item" title="Providers"><Bot size={18} /><span>Providers</span><span className="nav-count">{providers.length}</span></button>
           <button className="nav-item" title="Executions"><Zap size={18} /><span>Executions</span></button>
           <button className="nav-item" title="Settings"><Settings2 size={18} /><span>Settings</span></button>
         </nav>
@@ -159,7 +187,7 @@ function App() {
             <div className={`pulse-icon ${mode}`}><HeartPulse size={22} /></div>
             <div>
               <div className="health-title">
-                {mode === "recovering" ? "Automatic recovery in progress" : mode === "running" ? "Procurement cycle running" : isPaused ? "Standing order paused" : selected ? "Service requirement satisfied" : "Ready to procure"}
+                {mode === "recovering" ? "Automatic recovery in progress" : mode === "awaiting_payment" ? "Payment authorization required" : mode === "running" ? "Procurement cycle running" : isPaused ? "Standing order paused" : selected ? "Service requirement satisfied" : "Ready to procure"}
               </div>
               <div className="health-detail">
                 {selected ? `${selected.name} currently supplies transaction risk intelligence.` : "One active Standing Order is waiting for execution."}
@@ -176,7 +204,7 @@ function App() {
           <Metric icon={<Bot />} label="Evaluations" value={metrics.evaluations.toString()} note="provider decisions" />
           <Metric icon={<CheckCircle2 />} label="Purchases" value={metrics.purchases.toString()} note="verified results" />
           <Metric icon={<HeartPulse />} label="Recoveries" value={metrics.recoveries.toString()} note="automatic failovers" accent />
-          <Metric icon={<CircleDollarSign />} label="Spend" value={money.format(metrics.spend)} note={`of ${money.format(order.dailyBudget)} daily`} />
+          <Metric icon={<CircleDollarSign />} label="Spend" value={money.format(metrics.spend)} note={`${money.format(metrics.savings)} saved vs highest`} />
         </section>
 
         <div className="content-grid">
@@ -205,23 +233,45 @@ function App() {
 
           <section className="action-panel" aria-labelledby="action-title">
             <div>
-              <div className="eyebrow">Demo control</div>
-              <h2 id="action-title">Prove the recovery loop</h2>
-              <p>Run a policy-driven purchase, then degrade the selected provider and watch ReSource recover.</p>
+              <div className="eyebrow">{executionMode === "demo" ? "Demo control" : "Live buyer"}</div>
+              <h2 id="action-title">{executionMode === "demo" ? "Prove the recovery loop" : "Marketplace procurement"}</h2>
+              <p>{executionMode === "demo" ? "Run a policy-driven purchase, then degrade the selected provider and watch ReSource recover." : "Discover competing KeeperHub services, enforce policy, authorize x402, and verify the paid result."}</p>
             </div>
             <div className="demo-steps">
-              <Step number="01" label="Run procurement" done={metrics.cycles > 0} />
-              <Step number="02" label="Inject timeout" done={providers.find((provider) => provider.id === "sentinel")?.state === "ineligible"} />
-              <Step number="03" label="Verify recovery" done={metrics.recoveries > 0} />
+              <Step number="01" label={executionMode === "demo" ? "Run procurement" : "Discover and select"} done={metrics.cycles > 0} />
+              <Step number="02" label={executionMode === "demo" ? "Inject timeout" : "Authorize x402 payment"} done={executionMode === "demo" ? providers.find((provider) => provider.id === "sentinel")?.state === "ineligible" : metrics.purchases > 0} />
+              <Step number="03" label={executionMode === "demo" ? "Verify recovery" : "Verify provider result"} done={executionMode === "demo" ? metrics.recoveries > 0 : cycles.some((cycle) => cycle.status === "completed" && cycle.paymentProtocol === "x402")} />
             </div>
+            {pendingPayment && (
+              <div className="payment-authorization">
+                <div><span>Payment authorization</span><strong>{pendingPayment.amount.toFixed(2)} {pendingPayment.token}</strong></div>
+                <dl>
+                  <div><dt>Network</dt><dd>{pendingPayment.chainName} ({pendingPayment.chainId})</dd></div>
+                  <div><dt>Provider</dt><dd>{providers.find((provider) => provider.id === pendingPayment.providerId)?.name ?? pendingPayment.providerId}</dd></div>
+                  <div><dt>Pay to</dt><dd>{shortAddress(pendingPayment.recipient)}</dd></div>
+                </dl>
+              </div>
+            )}
             <div className="action-buttons">
-              {selectedId === "sentinel" && executionMode === "demo" ? (
+              {pendingPayment ? (
+                <>
+                  <button className="primary-button" onClick={confirmPayment} disabled={busy}><WalletCards size={17} />{busy ? "Payment running" : `Authorize ${pendingPayment.amount.toFixed(2)} ${pendingPayment.token}`}</button>
+                  {executionMode === "keeperhub" && <button className="icon-button in-panel" onClick={injectFailure} disabled={busy} title="Simulate provider SLA breach" aria-label="Simulate provider SLA breach"><TriangleAlert size={17} /></button>}
+                </>
+              ) : selectedId === "sentinel" && executionMode === "demo" ? (
                 <button className="danger-button" onClick={injectFailure} disabled={busy}><TriangleAlert size={17} />Inject provider failure</button>
               ) : (
                 <button className="primary-button" onClick={runCycle} disabled={busy || isPaused}><Play size={17} />{busy ? "Cycle running" : selectedId === "atlas" ? "Run another cycle" : "Run procurement cycle"}</button>
               )}
               {executionMode === "demo" && <button className="icon-button in-panel" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             </div>
+            {executionMode === "keeperhub" && (
+              <div className="direct-proof">
+                <div><span>Direct onchain proof</span><strong>{directProof.network}</strong></div>
+                <small>{directProof.status === "ready" ? "Safe first-write sequence is ready." : directProof.status === "simulated" ? `Simulation passed · ${directProof.gasEstimate} gas` : directProof.status === "completed" ? "KeeperHub transaction confirmed" : directProof.error ?? "Direct proof failed"}</small>
+                {directProof.transactionLink ? <a href={directProof.transactionLink} target="_blank" rel="noreferrer">View transaction <ExternalLink size={13} /></a> : <button className="secondary-button" onClick={() => runDirectProof(directProof.status === "simulated" ? "broadcast" : "simulate")} disabled={busy}>{directProof.status === "simulated" ? <Zap size={15} /> : <ShieldCheck size={15} />}{directProof.status === "simulated" ? "Broadcast proof" : "Simulate proof"}</button>}
+              </div>
+            )}
             {requestError && <div className="request-error" role="alert">{requestError}</div>}
           </section>
         </div>
@@ -238,7 +288,7 @@ function App() {
                 <tbody>
                   {decisions.map((decision, index) => (
                     <tr key={decision.provider.id} className={selectedId === decision.provider.id ? "selected-row" : ""}>
-                      <td><div className="provider-cell"><span className={`provider-logo logo-${decision.provider.id}`}>{decision.provider.name.charAt(0)}</span><span><strong>{decision.provider.name}</strong><small>{decision.provider.workflow}</small></span></div></td>
+                      <td><div className="provider-cell"><span className={`provider-logo logo-${decision.provider.id}`}>{decision.provider.name.charAt(0)}</span><span><strong>{decision.provider.name}</strong><small>{decision.provider.marketplaceSlug ?? decision.provider.workflow}</small></span></div></td>
                       <td>{money.format(decision.provider.price)}</td>
                       <td><span className={decision.provider.reliability < order.minReliability ? "negative" : ""}>{(decision.provider.reliability * 100).toFixed(decision.provider.reliability * 100 % 1 ? 1 : 0)}%</span></td>
                       <td><span className={decision.provider.latencyMs > order.maxLatencyMs ? "negative" : ""}>{(decision.provider.latencyMs / 1000).toFixed(1)}s</span></td>
@@ -287,6 +337,8 @@ function Constraint({ icon, label, value }: { icon: React.ReactNode; label: stri
 function Step({ number, label, done }: { number: string; label: string; done: boolean }) {
   return <div className={`demo-step ${done ? "done" : ""}`}><span>{done ? <Check size={13} /> : number}</span>{label}</div>;
 }
+
+function shortAddress(value: string) { return `${value.slice(0, 8)}...${value.slice(-6)}`; }
 
 export default App;
 

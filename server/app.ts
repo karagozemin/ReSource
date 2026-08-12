@@ -14,8 +14,24 @@ export function buildApp(orchestrator: ProcurementOrchestrator) {
     try { return await orchestrator.run(key); }
     catch (error) { return reply.code(503).send({ error: String(error) }); }
   });
+  app.post<{ Params: { cycleId: string } }>("/api/procurement/:cycleId/confirm-payment", async (request, reply) => {
+    try { return await orchestrator.confirmPayment(request.params.cycleId); }
+    catch (error) { return reply.code(409).send({ error: String(error) }); }
+  });
+  app.post("/api/direct-proof/simulate", async (_request, reply) => {
+    try { return await orchestrator.simulateDirectProof(); }
+    catch (error) { return reply.code(503).send({ error: String(error) }); }
+  });
+  app.post("/api/direct-proof/broadcast", async (_request, reply) => {
+    try { return await orchestrator.broadcastDirectProof(); }
+    catch (error) { return reply.code(409).send({ error: String(error) }); }
+  });
   app.post("/api/demo/failure", async (_request, reply) => {
     if (orchestrator.snapshot().executionMode !== "demo") return reply.code(404).send({ error: "Demo failure injection is unavailable" });
+    try { return await orchestrator.injectFailure(); }
+    catch (error) { return reply.code(409).send({ error: String(error) }); }
+  });
+  app.post("/api/providers/selected/failure", async (_request, reply) => {
     try { return await orchestrator.injectFailure(); }
     catch (error) { return reply.code(409).send({ error: String(error) }); }
   });

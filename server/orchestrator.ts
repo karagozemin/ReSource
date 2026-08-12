@@ -2,14 +2,21 @@ import { randomUUID } from "node:crypto";
 import { applyProviderFailure, rankProviders } from "../src/lib/procurement";
 import type { AppState, ProcurementCycle, TimelineEvent } from "../src/types";
 import type { ExecutionAdapter } from "./adapters";
+import type { KeeperHubDirectExecutionClient } from "./direct-execution";
 import { createInitialState } from "./fixtures";
+import type { MarketplaceClient } from "./marketplace";
 import type { StateStore } from "./store";
 
 export class ProcurementOrchestrator {
   private state!: AppState;
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly store: StateStore, private readonly adapter: ExecutionAdapter) {}
+  constructor(
+    private readonly store: StateStore,
+    private readonly adapter: ExecutionAdapter,
+    private readonly marketplace?: MarketplaceClient,
+    private readonly directExecution?: KeeperHubDirectExecutionClient,
+  ) {}
 
   async initialize() {
     const persisted = await this.store.load();
@@ -17,7 +24,7 @@ export class ProcurementOrchestrator {
       ? migrateState(persisted, this.adapter.mode)
       : createInitialState(this.adapter.mode);
     this.state.executionMode = this.adapter.mode;
-    this.state.integrationReady = this.adapter.isReady();
+    this.state.integrationReady = this.marketplace?.isReady() ?? this.adapter.isReady();
     if (this.state.mode === "running" || this.state.mode === "recovering") this.state.mode = "ready";
     await this.store.save(this.state);
   }
@@ -28,19 +35,53 @@ export class ProcurementOrchestrator {
     return this.serial(() => this.runInternal(idempotencyKey));
   }
 
+  confirmPayment(cycleId: string) {
+    return this.serial(() => this.confirmPaymentInternal(cycleId));
+  }
+
+  simulateDirectProof() {
+    return this.serial(async () => {
+      if (!this.directExecution?.isReady()) throw new Error("KeeperHub direct execution is not configured");
+      this.state.directProof = await this.directExecution.simulate();
+      this.addEvent("success", "Direct execution simulated", `${this.state.directProof.network} transfer passed simulation at ${this.state.directProof.gasEstimate} gas.`);
+      await this.store.save(this.state);
+      return this.snapshot();
+    });
+  }
+
+  broadcastDirectProof() {
+    return this.serial(async () => {
+      if (!this.directExecution?.isReady()) throw new Error("KeeperHub direct execution is not configured");
+      if (this.state.directProof.status !== "simulated") throw new Error("Direct execution must be simulated before broadcast");
+      this.state.directProof = await this.directExecution.broadcast();
+      this.addEvent(this.state.directProof.status === "completed" ? "success" : "error", "Direct execution proof", this.state.directProof.transactionHash ? `KeeperHub confirmed ${shortHash(this.state.directProof.transactionHash)}.` : this.state.directProof.error ?? "Direct execution failed.");
+      await this.store.save(this.state);
+      return this.snapshot();
+    });
+  }
+
   injectFailure() {
     return this.serial(async () => {
       const selectedId = this.state.selectedProviderId;
       if (!selectedId) throw new Error("Run a procurement cycle before injecting failure");
       const selected = this.state.providers.find((provider) => provider.id === selectedId);
       if (!selected) throw new Error("Selected provider not found");
+      if (this.state.pendingPayment) {
+        const pendingCycle = this.state.cycles.find((cycle) => cycle.id === this.state.pendingPayment?.cycleId);
+        if (pendingCycle) {
+          pendingCycle.status = "failed";
+          pendingCycle.error = "Controlled SLA breach before payment";
+          pendingCycle.completedAt = new Date().toISOString();
+        }
+        this.state.pendingPayment = null;
+      }
       this.state.mode = "recovering";
       this.addEvent("error", `${selected.name} timed out`, "Provider exceeded the Standing Order SLA.");
       this.state.providers = this.state.providers.map((provider) => provider.id === selected.id ? applyProviderFailure(provider) : provider);
       this.addEvent("warning", "Provider automatically suspended", "Observed performance breached policy. Re-procurement started.");
       await this.store.save(this.state);
       const result = await this.runInternal(`recovery-${randomUUID()}`);
-      if (!result.replayed && result.cycle.status === "completed") {
+      if (!result.replayed && result.cycle.status === "completed" && !this.marketplace) {
         this.state.metrics.recoveries += 1;
         this.addEvent("success", "Recovery verified", "Replacement provider satisfied the Standing Order without operator approval.");
         await this.store.save(this.state);
@@ -62,7 +103,7 @@ export class ProcurementOrchestrator {
   reset() {
     return this.serial(async () => {
       this.state = createInitialState(this.adapter.mode);
-      this.state.integrationReady = this.adapter.isReady();
+      this.state.integrationReady = this.marketplace?.isReady() ?? this.adapter.isReady();
       await this.store.reset(this.state);
       return this.snapshot();
     });
@@ -77,10 +118,22 @@ export class ProcurementOrchestrator {
   private async runInternal(idempotencyKey: string) {
     const existing = this.state.cycles.find((cycle) => cycle.idempotencyKey === idempotencyKey);
     if (existing) return { state: this.snapshot(), cycle: existing, replayed: true };
-    if (!this.adapter.isReady()) throw new Error("Execution adapter is not configured");
+    if (this.state.pendingPayment) throw new Error("A payment authorization is already pending");
+    if (!(this.marketplace?.isReady() ?? this.adapter.isReady())) throw new Error("Execution adapter is not configured");
     if (this.state.order.status !== "active") return this.policyBlocked(idempotencyKey, "Standing order is paused");
 
     this.state.mode = "running";
+    if (this.marketplace?.isReady()) {
+      try {
+        const discovered = await this.marketplace.discover(this.state.providers);
+        this.state.providers = mergeProviderHistory(discovered, this.state.providers);
+      } catch (error) {
+        this.state.mode = "ready";
+        this.addEvent("error", "Marketplace discovery failed", String(error));
+        await this.store.save(this.state);
+        throw error;
+      }
+    }
     this.state.metrics.cycles += 1;
     this.state.metrics.evaluations += this.state.providers.length;
     this.addEvent("info", "Procurement cycle started", `Evaluating ${this.state.providers.length} provider workflows.`);
@@ -94,9 +147,30 @@ export class ProcurementOrchestrator {
     this.state.selectedProviderId = winner.provider.id;
     this.addEvent("success", `${winner.provider.name} selected`, `$${winner.provider.price.toFixed(2)} per call · ${(winner.score! * 100).toFixed(1)} policy score.`);
     this.addEvent("success", "Buyer Policy Guard approved", "Budget, SLA and duplicate checks passed.");
-    this.addEvent("info", "Execution authorized", `${this.adapter.mode} adapter received the workflow request.`);
+    this.addEvent(
+      "info",
+      this.marketplace?.isReady() ? "Marketplace quote requested" : "Execution authorized",
+      this.marketplace?.isReady() ? "Live listing terms are being resolved before payment." : `${this.adapter.mode} adapter received the workflow request.`,
+    );
 
     const cycleId = `cycle_${randomUUID()}`;
+    if (this.marketplace?.isReady()) {
+      let pending;
+      try {
+        pending = await this.marketplace.quote(winner.provider);
+      } catch (error) {
+        return this.finishQuoteFailure(cycleId, idempotencyKey, winner.provider.id, String(error));
+      }
+      pending.cycleId = cycleId;
+      if (pending.amount !== winner.provider.price) return this.policyBlocked(idempotencyKey, "Quoted price changed after provider selection");
+      const cycle = makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "awaiting_payment", 0, null, null, null);
+      this.state.pendingPayment = pending;
+      this.state.mode = "awaiting_payment";
+      this.state.cycles.unshift(cycle);
+      this.addEvent("warning", "Payment authorization required", `${pending.amount.toFixed(2)} ${pending.token} on ${pending.chainName} is ready for approval.`);
+      await this.store.save(this.state);
+      return { state: this.snapshot(), cycle, replayed: false };
+    }
     let result;
     try {
       result = await this.adapter.execute(winner.provider, this.state.order);
@@ -128,9 +202,83 @@ export class ProcurementOrchestrator {
     return { state: this.snapshot(), cycle, replayed: false };
   }
 
+  private async confirmPaymentInternal(cycleId: string) {
+    const payment = this.state.pendingPayment;
+    if (!payment || payment.cycleId !== cycleId) throw new Error("No matching payment authorization is pending");
+    if (!this.marketplace?.isReady()) throw new Error("Marketplace buyer is not configured");
+    const cycle = this.state.cycles.find((item) => item.id === cycleId);
+    if (!cycle || cycle.status !== "awaiting_payment") throw new Error("Procurement cycle is not awaiting payment");
+    const provider = this.state.providers.find((item) => item.id === payment.providerId);
+    if (!provider) throw new Error("Selected provider no longer exists");
+    if (this.state.order.status !== "active") throw new Error("Standing order is paused; payment authorization is blocked");
+    if (payment.amount > this.state.order.maxPrice || this.state.metrics.spend + payment.amount > this.state.order.dailyBudget) {
+      cycle.status = "policy_blocked";
+      cycle.error = "Payment no longer satisfies budget policy";
+      cycle.completedAt = new Date().toISOString();
+      this.state.pendingPayment = null;
+      this.state.mode = "ready";
+      this.addEvent("error", "Policy blocked payment", cycle.error);
+      await this.store.save(this.state);
+      return { state: this.snapshot(), cycle, replayed: false };
+    }
+
+    this.state.mode = "running";
+    this.addEvent("info", "x402 payment authorized", `${payment.amount.toFixed(2)} ${payment.token} approved for ${provider.name}.`);
+    let result;
+    try {
+      result = await this.marketplace.pay(payment);
+    } catch (error) {
+      this.state.mode = "awaiting_payment";
+      this.addEvent("error", "Payment attempt failed", `${String(error)} No purchase was recorded.`);
+      await this.store.save(this.state);
+      throw error;
+    }
+    this.state.pendingPayment = null;
+    cycle.executionId = result.executionId;
+    cycle.transactionHash = result.transactionHash;
+    cycle.paymentProtocol = "x402";
+    cycle.completedAt = new Date().toISOString();
+    if (result.paid) {
+      cycle.amount = result.amount ?? payment.amount;
+      this.state.metrics.purchases += 1;
+      this.state.metrics.spend += cycle.amount;
+      const highestEligiblePrice = Math.max(...rankProviders(this.state.providers, this.state.order, this.state.metrics.spend - cycle.amount)
+        .filter((decision) => decision.eligible)
+        .map((decision) => decision.provider.price), cycle.amount);
+      this.state.metrics.savings += Math.max(0, highestEligiblePrice - cycle.amount);
+    }
+
+    if (!result.success || !verifyResult(result.output, result.latencyMs, this.state.order.maxLatencyMs)) {
+      cycle.status = "failed";
+      cycle.error = result.error ?? "Result verification failed";
+      this.state.providers = this.state.providers.map((item) => item.id === provider.id ? applyProviderFailure(item) : item);
+      this.state.mode = "recovering";
+      this.addEvent("error", `${provider.name} failed verification`, cycle.error);
+      this.addEvent("warning", "Provider automatically suspended", "ReSource will select the next eligible Marketplace provider.");
+      await this.store.save(this.state);
+      if (this.state.order.automaticFailover) return this.runInternal(`recovery-${cycle.id}`);
+      return { state: this.snapshot(), cycle, replayed: false };
+    }
+
+    cycle.status = "completed";
+    this.state.metrics.executions += 1;
+    if (cycle.idempotencyKey.startsWith("recovery-")) {
+      this.state.metrics.recoveries += 1;
+      this.addEvent("success", "Recovery verified", "Replacement provider satisfied the Standing Order after automatic re-procurement.");
+    }
+    this.state.providers = this.state.providers.map((item) => item.id === provider.id ? updateProviderSuccess(item, result.latencyMs) : item);
+    this.state.selectedProviderId = provider.id;
+    this.state.mode = "healthy";
+    this.addEvent("success", "Paid result verified", `Schema and SLA passed in ${result.latencyMs} ms.`);
+    this.addEvent("success", "x402 settlement confirmed", result.transactionHash ? `Payment transaction: ${shortHash(result.transactionHash)}` : "Marketplace payment completed.");
+    await this.store.save(this.state);
+    return { state: this.snapshot(), cycle, replayed: false };
+  }
+
   private async policyBlocked(key: string, error: string) {
     const cycle = makeCycle(`cycle_${randomUUID()}`, key, this.state.order.id, null, "policy_blocked", 0, null, null, error);
     this.state.cycles.unshift(cycle);
+    this.state.mode = "ready";
     this.addEvent("error", "Policy blocked procurement", error);
     await this.store.save(this.state);
     return { state: this.snapshot(), cycle, replayed: false };
@@ -149,6 +297,15 @@ export class ProcurementOrchestrator {
     this.state.mode = "ready";
     this.addEvent("error", "Provider execution failed", error);
     const cycle = makeCycle(cycleId, key, this.state.order.id, providerId, "failed", 0, executionId, null, error);
+    this.state.cycles.unshift(cycle);
+    await this.store.save(this.state);
+    return { state: this.snapshot(), cycle, replayed: false };
+  }
+
+  private async finishQuoteFailure(cycleId: string, key: string, providerId: string, error: string) {
+    this.state.mode = "ready";
+    this.addEvent("error", "Marketplace quote failed", `${error} No payment was attempted.`);
+    const cycle = makeCycle(cycleId, key, this.state.order.id, providerId, "failed", 0, null, null, error);
     this.state.cycles.unshift(cycle);
     await this.store.save(this.state);
     return { state: this.snapshot(), cycle, replayed: false };
@@ -187,9 +344,30 @@ function makeCycle(id: string, idempotencyKey: string, standingOrderId: string, 
 
 function shortHash(hash: string) { return `${hash.slice(0, 8)}…${hash.slice(-6)}`; }
 
+function updateProviderSuccess(provider: AppState["providers"][number], latencyMs: number) {
+  const attempts = provider.attempts + 1;
+  return { ...provider, attempts, reliability: (provider.reliability * provider.attempts + 1) / attempts, latencyMs: Math.round((provider.latencyMs * provider.attempts + latencyMs) / attempts), state: "healthy" as const };
+}
+
+function mergeProviderHistory(discovered: AppState["providers"], history: AppState["providers"]) {
+  return discovered.map((provider) => {
+    const previous = history.find((item) => item.id === provider.id || (item.marketplaceSlug && item.marketplaceSlug === provider.marketplaceSlug));
+    if (!previous) return provider;
+    return {
+      ...provider,
+      reliability: previous.reliability,
+      latencyMs: previous.latencyMs,
+      attempts: previous.attempts,
+      state: previous.state,
+    };
+  });
+}
+
 function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState {
-  if (state.schemaVersion === 3) return state;
-  const migrated = { ...state, schemaVersion: 3 as const };
+  if (state.schemaVersion === 4 && state.pendingPayment !== undefined && state.directProof) return state;
+  const initial = createInitialState(mode);
+  const migrated = { ...state, schemaVersion: 4 as const, pendingPayment: null, directProof: initial.directProof };
+  migrated.metrics = { ...migrated.metrics, savings: migrated.metrics.savings ?? 0 };
   if (mode === "keeperhub") {
     migrated.metrics = { ...migrated.metrics, purchases: 0, spend: 0 };
     migrated.cycles = migrated.cycles.map((cycle) => ({ ...cycle, amount: 0 }));

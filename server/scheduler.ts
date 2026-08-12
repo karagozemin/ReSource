@@ -23,7 +23,7 @@ export class TriggerEngine {
 
   async tick() {
     const state = this.orchestrator.snapshot();
-    if (state.order.status !== "active" || !state.integrationReady) return null;
+    if (state.order.status !== "active" || !state.integrationReady || state.pendingPayment) return null;
     const key = scheduledCycleKey(state.order.id, state.order.intervalMinutes, this.now());
     return this.orchestrator.run(key);
   }

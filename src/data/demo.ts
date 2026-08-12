@@ -18,6 +18,8 @@ export const initialProviders: Provider[] = [
     id: "atlas",
     name: "Atlas Risk",
     workflow: "transaction-risk-atlas",
+    marketplaceSlug: "resource-atlas-risk-provider",
+    source: "fixture",
     price: 0.05,
     reliability: 0.99,
     latencyMs: 8_200,
@@ -28,6 +30,8 @@ export const initialProviders: Provider[] = [
     id: "sentinel",
     name: "Sentinel Labs",
     workflow: "transaction-risk-sentinel",
+    marketplaceSlug: "resource-sentinel-risk-provider",
+    source: "fixture",
     price: 0.03,
     reliability: 0.96,
     latencyMs: 13_100,
@@ -38,6 +42,7 @@ export const initialProviders: Provider[] = [
     id: "veridian",
     name: "Veridian Data",
     workflow: "transaction-risk-veridian",
+    source: "fixture",
     price: 0.02,
     reliability: 0.98,
     latencyMs: 31_400,
@@ -53,6 +58,7 @@ export const initialMetrics: Metrics = {
   recoveries: 0,
   executions: 0,
   spend: 0,
+  savings: 0,
 };
 
 export const initialEvents: TimelineEvent[] = [

@@ -8,6 +8,9 @@ export type ExecutionResult = {
   output: unknown;
   transactionHash: string | null;
   error: string | null;
+  paid?: boolean;
+  amount?: number;
+  paymentProtocol?: "x402" | null;
 };
 
 export interface ExecutionAdapter {

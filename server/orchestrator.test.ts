@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DemoExecutionAdapter } from "./adapters";
 import type { ExecutionAdapter } from "./adapters";
+import type { MarketplaceClient } from "./marketplace";
 import { ProcurementOrchestrator } from "./orchestrator";
 import { MemoryStateStore } from "./store";
 
@@ -82,4 +83,58 @@ describe("ProcurementOrchestrator", () => {
     expect(result.state.metrics).toMatchObject({ purchases: 0, executions: 1, spend: 0 });
     expect(result.cycle.amount).toBe(0);
   });
+
+  it("quotes a Marketplace purchase before moving funds", async () => {
+    const marketplace = marketplaceStub();
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplace);
+    await buyer.initialize();
+    const result = await buyer.run("marketplace-quote");
+    expect(result.cycle.status).toBe("awaiting_payment");
+    expect(result.state.pendingPayment).toMatchObject({ providerId: "sentinel", amount: 0.03, token: "USDC" });
+    expect(result.state.metrics).toMatchObject({ purchases: 0, spend: 0 });
+    await expect(buyer.run("second-cycle")).rejects.toThrow("already pending");
+  });
+
+  it("records x402 spend only after payment and result verification", async () => {
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplaceStub());
+    await buyer.initialize();
+    const quote = await buyer.run("paid-cycle");
+    const result = await buyer.confirmPayment(quote.cycle.id);
+    expect(result.cycle).toMatchObject({ status: "completed", amount: 0.03, paymentProtocol: "x402", transactionHash: "0xpayment" });
+    expect(result.state.metrics).toMatchObject({ purchases: 1, executions: 1, spend: 0.03 });
+    expect(result.state.metrics.savings).toBeCloseTo(0.02);
+    expect(result.state.pendingPayment).toBeNull();
+  });
+
+  it("blocks a stale payment authorization after the order is paused", async () => {
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplaceStub());
+    await buyer.initialize();
+    const quote = await buyer.run("pause-before-pay");
+    await buyer.togglePause();
+    await expect(buyer.confirmPayment(quote.cycle.id)).rejects.toThrow("Standing order is paused");
+    expect(buyer.snapshot().metrics.spend).toBe(0);
+  });
+
+  it("re-procures from Atlas when Sentinel breaches SLA before payment", async () => {
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplaceStub());
+    await buyer.initialize();
+    await buyer.run("sentinel-quote");
+    const result = await buyer.injectFailure();
+    expect(result.cycle.status).toBe("awaiting_payment");
+    expect(result.state.pendingPayment).toMatchObject({ providerId: "atlas", amount: 0.05 });
+    expect(result.state.providers.find((provider) => provider.id === "sentinel")?.state).toBe("ineligible");
+    expect(result.state.metrics.spend).toBe(0);
+  });
 });
+
+function marketplaceStub(): MarketplaceClient {
+  return {
+    isReady: () => true,
+    discover: async () => [
+      { id: "sentinel", name: "Sentinel", workflow: "resource-sentinel-risk-provider", marketplaceSlug: "resource-sentinel-risk-provider", source: "marketplace", price: 0.03, reliability: 0.99, latencyMs: 8_000, attempts: 10, state: "healthy" },
+      { id: "atlas", name: "Atlas", workflow: "resource-atlas-risk-provider", marketplaceSlug: "resource-atlas-risk-provider", source: "marketplace", price: 0.05, reliability: 0.99, latencyMs: 8_000, attempts: 10, state: "healthy" },
+    ],
+    quote: async (provider) => ({ cycleId: "", paymentId: "pay_test", providerId: provider.id, acceptsIndex: 0, amount: provider.price, token: "USDC", chainId: "8453", chainName: "Base", recipient: "0xmerchant", createdAt: new Date().toISOString() }),
+    pay: async () => ({ executionId: "keeperhub-paid", success: true, latencyMs: 500, output: { riskLevel: "low", riskScore: 12, factors: [] }, transactionHash: "0xpayment", error: null, paid: true, amount: 0.03, paymentProtocol: "x402" }),
+  };
+}
