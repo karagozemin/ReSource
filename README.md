@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/resource-readme.png" alt="ReSource" width="320" />
+  <img src="docs/assets/resource-readme.png" alt="ReSource" width="250" />
 </p>
 
 # ReSource
