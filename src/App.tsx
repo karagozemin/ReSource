@@ -44,6 +44,8 @@ type OperationFlow = {
   status: FlowStatus;
   resultTitle: string | null;
   resultDetail: string | null;
+  resultUrl: string | null;
+  resultLinkLabel: string | null;
 };
 
 const flowPhases: Record<FlowKind, string[]> = {
@@ -165,7 +167,7 @@ function App() {
 
   function startOperationFlow(kind: FlowKind) {
     stopOperationFlowTimer();
-    setOperationFlow({ kind, phase: 0, status: "running", resultTitle: null, resultDetail: null });
+    setOperationFlow({ kind, phase: 0, status: "running", resultTitle: null, resultDetail: null, resultUrl: null, resultLinkLabel: null });
     operationFlowTimer.current = window.setInterval(() => {
       setOperationFlow((current) => current && current.status === "running"
         ? { ...current, phase: Math.min(current.phase + 1, flowPhases[current.kind].length - 2) }
@@ -173,7 +175,13 @@ function App() {
     }, kind === "payment" ? 1050 : 850);
   }
 
-  function finishOperationFlow(status: Exclude<FlowStatus, "running">, resultTitle: string, resultDetail: string | null = null) {
+  function finishOperationFlow(
+    status: Exclude<FlowStatus, "running">,
+    resultTitle: string,
+    resultDetail: string | null = null,
+    resultUrl: string | null = null,
+    resultLinkLabel: string | null = null,
+  ) {
     stopOperationFlowTimer();
     setOperationFlow((current) => current ? {
       ...current,
@@ -181,6 +189,8 @@ function App() {
       status,
       resultTitle,
       resultDetail,
+      resultUrl,
+      resultLinkLabel,
     } : current);
   }
 
@@ -247,6 +257,8 @@ function App() {
     setPending(true);
     setMode("running");
     const confirmedCycleId = pendingPayment.cycleId;
+    const confirmedChainId = pendingPayment.chainId;
+    const confirmedChainName = pendingPayment.chainName;
     startOperationFlow("payment");
     try {
       const [response] = await Promise.all([
@@ -266,7 +278,9 @@ function App() {
         finishOperationFlow(
           "success",
           "Payment settled. Result verified.",
-          cycle?.transactionHash ? `Transaction ${shortValue(cycle.transactionHash)}` : "The provider response passed schema and SLA checks.",
+          cycle?.transactionHash ? `${confirmedChainName} transaction ${shortValue(cycle.transactionHash)}` : "The provider response passed schema and SLA checks.",
+          cycle?.transactionHash ? explorerTransactionUrl(confirmedChainId, cycle.transactionHash) : null,
+          cycle?.transactionHash ? `View on ${explorerName(confirmedChainId)}` : null,
         );
       }
     } catch (error) {
@@ -468,9 +482,9 @@ function App() {
             </div>
             <div className="order-foot">
               <div className="failover-copy"><Sparkles size={16} /><span><strong>Self-healing enabled</strong><small>Replace providers when policy is breached</small></span></div>
-              <button className="secondary-button" onClick={togglePause} disabled={busy}>
+              {!sponsoredDemo && <button className="secondary-button" onClick={togglePause} disabled={busy}>
                 {isPaused ? <Play size={16} /> : <Pause size={16} />}{isPaused ? "Resume" : "Pause"}
-              </button>
+              </button>}
             </div>
           </section>
 
@@ -702,7 +716,10 @@ function OperationExperience({ flow, providerCount, payment, onClose }: {
             <span>{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
             <p>{isRunning ? `Processing: ${phases[flow.phase]}` : flow.resultDetail ?? flow.resultTitle}</p>
           </div>
-          {!isRunning && <button className="execution-close" onClick={onClose}>{flow.status === "success" ? "Continue" : "Review"}<ArrowRight size={15} /></button>}
+          {!isRunning && <div className="execution-result-actions">
+            {flow.resultUrl && flow.resultLinkLabel && <a className="execution-explorer" href={flow.resultUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />{flow.resultLinkLabel}</a>}
+            <button className="execution-close" onClick={onClose}>{flow.status === "success" ? "Continue" : "Review"}<ArrowRight size={15} /></button>
+          </div>}
         </footer>
       </div>
     </div>
@@ -732,6 +749,15 @@ function wait(duration: number) {
 
 function shortValue(value: string) {
   return value.length > 22 ? `${value.slice(0, 10)}...${value.slice(-8)}` : value;
+}
+
+function explorerTransactionUrl(chainId: string, transactionHash: string) {
+  const origin = chainId === "84532" ? "https://sepolia.basescan.org" : "https://basescan.org";
+  return `${origin}/tx/${encodeURIComponent(transactionHash)}`;
+}
+
+function explorerName(chainId: string) {
+  return chainId === "84532" ? "Base Sepolia" : "BaseScan";
 }
 
 export default App;
