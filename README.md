@@ -325,19 +325,7 @@ Vitest covers hard eligibility filters, deterministic ranking, failure suspensio
 
 [`vercel.json`](vercel.json) deploys the React client. [`render.yaml`](render.yaml) deploys the API as a live KeeperHub Docker service, installs the checksum-verified Linux `onchainos` CLI and mounts a persistent disk at `/app/storage`.
 
-### 1. Export the authenticated wallet runtime
-
-Run this only on the authenticated operator machine:
-
-```bash
-sh scripts/export-render-wallet.sh
-```
-
-This creates the gitignored `render-wallet.b64`. In the Render service, open **Environment → Secret Files**, create a file named `onchainos-wallet.b64`, and paste the file contents. Render mounts it at `/etc/secrets/onchainos-wallet.b64`; startup extracts it into the persistent runtime home and fails closed unless `onchainos wallet status` reports an authenticated session.
-
-Never commit, log or publish `render-wallet.b64`. Treat it as a wallet credential and rotate it by logging out/re-authenticating locally, exporting again and replacing the Render secret file.
-
-### 2. Create the Render Blueprint
+### 1. Create the Render Blueprint
 
 Connect this repository with **New → Blueprint**. The root directory remains empty because `render.yaml` is at repository root. The Blueprint uses the paid `starter` plan because Render persistent disks are unavailable on the free plan.
 
@@ -351,7 +339,21 @@ RESOURCE_BUYER_ADDRESS=<Agentic Wallet EVM address>
 
 Generate a strong value locally with `openssl rand -hex 32`, set it as Render's `OPERATOR_API_KEY`, and use the same value only in the dashboard's **Unlock** dialog. Do not add it to Vercel.
 
-The Blueprint fixes `EXECUTION_MODE=keeperhub`, keeps `SCHEDULER_ENABLED=false`, persists state under `/app/storage/data`, and checks `/api/health`.
+The Blueprint fixes `EXECUTION_MODE=keeperhub`, keeps `SCHEDULER_ENABLED=false`, persists state under `/app/storage/data`, and checks `/api/health`. Its first deploy is expected to fail closed until the wallet Secret File in the next step is attached.
+
+### 2. Attach the authenticated wallet runtime
+
+Run this only on the authenticated operator machine:
+
+```bash
+sh scripts/export-render-wallet.sh
+```
+
+This creates the gitignored `render-wallet.b64`. Open the **resource-api service itself** in Render (not the Blueprint page or an unrelated Environment Group), then open **Environment → Secret Files**. Create a Secret File with the exact filename `onchainos-wallet.b64`, paste the file contents, select **Save Changes**, and trigger **Manual Deploy → Deploy latest commit** if Render does not redeploy automatically.
+
+Do not create an environment variable named `onchainos-wallet.b64`; the startup process requires a Secret File. Render mounts it at `/etc/secrets/onchainos-wallet.b64`; startup extracts it into the persistent runtime home and fails closed unless `onchainos wallet status` reports an authenticated session.
+
+Never commit, log or publish `render-wallet.b64`. Treat it as a wallet credential and rotate it by logging out/re-authenticating locally, exporting again and replacing the Render secret file.
 
 ### 3. Deploy Vercel
 
