@@ -36,6 +36,25 @@ describe("procurement API", () => {
     expect(response.json()).toMatchObject({ executionMode: "demo", integrationReady: true });
   });
 
+  it("allows only the configured frontend origin", async () => {
+    const previousOrigin = process.env.FRONTEND_ORIGIN;
+    await app.close();
+    process.env.FRONTEND_ORIGIN = "https://resource.vercel.app";
+    const orchestrator = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter());
+    await orchestrator.initialize();
+    app = buildApp(orchestrator);
+
+    try {
+      const allowed = await app.inject({ method: "GET", url: "/api/state", headers: { origin: "https://resource.vercel.app" } });
+      const rejected = await app.inject({ method: "GET", url: "/api/state", headers: { origin: "https://untrusted.example" } });
+      expect(allowed.headers["access-control-allow-origin"]).toBe("https://resource.vercel.app");
+      expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      if (previousOrigin === undefined) delete process.env.FRONTEND_ORIGIN;
+      else process.env.FRONTEND_ORIGIN = previousOrigin;
+    }
+  });
+
   it("updates a validated standing order policy", async () => {
     const response = await app.inject({
       method: "PATCH",

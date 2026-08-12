@@ -14,11 +14,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
     "@vitejs/plugin-react": "latest",
     "fastify": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "tsx": "^4.23.12",
     "vite": "latest"
   },
   "devDependencies": {
@@ -33,7 +35,6 @@
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
     "jsdom": "latest",
-    "tsx": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vitest": "latest"

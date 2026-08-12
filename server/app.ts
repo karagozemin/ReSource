@@ -1,10 +1,26 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import type { StandingOrderUpdate } from "../src/types";
 import type { ProcurementOrchestrator } from "./orchestrator";
 import type { TriggerEngine } from "./scheduler";
 
 export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: TriggerEngine) {
   const app = Fastify({ logger: true });
+
+  const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? "")
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  if (allowedOrigins.length > 0) {
+    void app.register(cors, {
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) callback(null, true);
+        else callback(null, false);
+      },
+      methods: ["GET", "POST", "PATCH", "OPTIONS"],
+      allowedHeaders: ["content-type", "idempotency-key"],
+    });
+  }
 
   app.get("/api/health", async () => ({ ok: true, mode: orchestrator.snapshot().executionMode }));
   app.get("/api/state", async () => orchestrator.snapshot());

@@ -44,6 +44,20 @@ The command starts the API on port `8787` and the Vite dashboard on port `5173`.
 2. Select **Inject provider failure**. Sentinel times out and is suspended.
 3. Watch ReSource re-rank the market and automatically move the Standing Order to Atlas.
 
+## Deploy: Render API + Vercel web
+
+First import the repository into Vercel and complete an initial deployment to obtain its production URL. Then deploy the backend using `render.yaml`. In Render, set `FRONTEND_ORIGIN` to that Vercel URL (for example `https://resource.vercel.app`). The service binds to Render's `PORT` automatically and exposes `/api/health` for health checks.
+
+After Render provides the backend URL, set this Vercel project environment variable:
+
+```text
+VITE_API_BASE_URL=https://resource-api.onrender.com
+```
+
+Redeploy Vercel so the build includes the API URL. For multiple Vercel domains, `FRONTEND_ORIGIN` accepts a comma-separated list. Do not add a trailing slash to either URL.
+
+The free Render plan has an ephemeral filesystem, so demo state resets after a restart or redeploy. For persistent production state, use a paid persistent disk mounted at `/var/data` with `DATA_DIR=/var/data`, or replace the JSON store with a managed database. Keep `SCHEDULER_ENABLED=false` until durable storage and spending controls are configured.
+
 ## Verify
 
 ```bash

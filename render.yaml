@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: resource-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.15.0
+      - key: EXECUTION_MODE
+        value: demo
+      - key: SCHEDULER_ENABLED
+        value: "false"
+      - key: FRONTEND_ORIGIN
+        sync: false

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowRight,
+  ArrowUpRight,
   Bot,
   Check,
   CheckCircle2,
@@ -20,6 +21,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Terminal,
   TriangleAlert,
   WalletCards,
   X,
@@ -53,6 +55,7 @@ const eventTime = (value: string) => {
 };
 
 function App() {
+  const [experience, setExperience] = useState<"landing" | "entering" | "app">(() => Object.hasOwn(viewTitles, window.location.hash.slice(1)) ? "app" : "landing");
   const [activeView, setActiveView] = useState<ViewId>(readInitialView);
   const [providers, setProviders] = useState(initialProviders);
   const [events, setEvents] = useState(initialEvents);
@@ -68,6 +71,8 @@ function App() {
   const [directProof, setDirectProof] = useState<DirectProof>({ status: "ready", chainId: "84532", network: "Base Sepolia", from: null, to: null, gasEstimate: null, executionId: null, transactionHash: null, transactionLink: null, error: null });
   const [cycles, setCycles] = useState<ProcurementCycle[]>([]);
   const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null } });
+  const [operation, setOperation] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     void Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")])
@@ -83,6 +88,32 @@ function App() {
   const selected = providers.find((provider) => provider.id === selectedId) ?? null;
   const isPaused = order.status === "paused";
   const busy = pending || mode === "running" || mode === "recovering";
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 3600);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  function enterWorkspace() {
+    setExperience("entering");
+    window.setTimeout(() => setExperience("app"), 1450);
+  }
+
+  function beginOperation(label: string) {
+    setOperation(label);
+    setNotice(null);
+  }
+
+  function failOperation(error: unknown) {
+    setOperation(null);
+    setRequestError(error instanceof Error ? error.message : String(error));
+  }
+
+  function completeOperation(label: string) {
+    setNotice(label);
+    setOperation(null);
+  }
 
   function applyState(state: AppState) {
     setProviders(state.providers);
@@ -103,15 +134,17 @@ function App() {
     if (busy || isPaused) return;
     setPending(true);
     setMode("running");
+    beginOperation("Evaluating provider market");
     try {
       const response = await apiRequest<{ state: AppState }>(`/api/standing-orders/${order.id}/run`, {
         method: "POST",
         headers: { "idempotency-key": crypto.randomUUID() },
       });
       applyState(response.state);
+      completeOperation(response.state.pendingPayment ? "Quote ready for authorization" : "Procurement cycle verified");
     } catch (error) {
       setMode("ready");
-      setRequestError(error instanceof Error ? error.message : String(error));
+      failOperation(error);
     } finally { setPending(false); }
   }
 
@@ -119,12 +152,14 @@ function App() {
     if (busy || !selectedId) return;
     setPending(true);
     setMode("recovering");
+    beginOperation("Detecting breach and rerouting service");
     try {
       const response = await apiRequest<{ state: AppState }>(executionMode === "demo" ? "/api/demo/failure" : "/api/providers/selected/failure", { method: "POST" });
       applyState(response.state);
+      completeOperation("Provider replaced automatically");
     } catch (error) {
       setMode("ready");
-      setRequestError(error instanceof Error ? error.message : String(error));
+      failOperation(error);
     } finally { setPending(false); }
   }
 
@@ -132,81 +167,93 @@ function App() {
     if (!pendingPayment || busy) return;
     setPending(true);
     setMode("running");
+    beginOperation("Authorizing and verifying payment");
     try {
       const response = await apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, { method: "POST" });
       applyState(response.state);
+      completeOperation("Payment settled and result verified");
       if (response.needsReconfirmation) setRequestError("Payment quote expired and was refreshed. Review the new terms, then authorize again.");
     } catch (error) {
       setMode("awaiting_payment");
-      setRequestError(error instanceof Error ? error.message : String(error));
+      failOperation(error);
     } finally { setPending(false); }
   }
 
   async function runDirectProof(action: "simulate" | "broadcast") {
     if (busy) return;
     setPending(true);
-    try { applyState(await apiRequest<AppState>(`/api/direct-proof/${action}`, { method: "POST" })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation(action === "simulate" ? "Simulating onchain proof" : "Broadcasting onchain proof");
+    try { applyState(await apiRequest<AppState>(`/api/direct-proof/${action}`, { method: "POST" })); completeOperation(action === "simulate" ? "Simulation passed" : "Transaction confirmed"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function resetDemo() {
     if (executionMode !== "demo") return;
     setPending(true);
-    try { applyState(await apiRequest<AppState>("/api/demo/reset", { method: "POST" })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation("Resetting demo environment");
+    try { applyState(await apiRequest<AppState>("/api/demo/reset", { method: "POST" })); completeOperation("Demo environment reset"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function togglePause() {
     if (busy) return;
     setPending(true);
-    try { applyState(await apiRequest<AppState>("/api/standing-orders/toggle", { method: "POST" })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation(isPaused ? "Resuming standing order" : "Pausing standing order");
+    try { applyState(await apiRequest<AppState>("/api/standing-orders/toggle", { method: "POST" })); completeOperation(isPaused ? "Standing order resumed" : "Standing order paused"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function saveOrder(update: StandingOrderUpdate) {
     if (busy) return false;
     setPending(true);
+    beginOperation("Validating procurement policy");
     try {
       applyState(await apiRequest<AppState>("/api/standing-orders/policy", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(update) }));
+      completeOperation("Procurement policy saved");
       return true;
     }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); return false; }
+    catch (error) { failOperation(error); return false; }
     finally { setPending(false); }
   }
 
   async function refreshProviders() {
     if (busy) return;
     setPending(true);
-    try { applyState(await apiRequest<AppState>("/api/providers/refresh", { method: "POST" })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation("Refreshing marketplace catalog");
+    try { applyState(await apiRequest<AppState>("/api/providers/refresh", { method: "POST" })); completeOperation("Provider catalog refreshed"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function requalifyProvider(providerId: string) {
     if (busy) return;
     setPending(true);
-    try { applyState(await apiRequest<AppState>(`/api/providers/${providerId}/requalify`, { method: "POST" })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation("Requalifying provider");
+    try { applyState(await apiRequest<AppState>(`/api/providers/${providerId}/requalify`, { method: "POST" })); completeOperation("Provider requalified"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function setScheduler(enabled: boolean) {
     setPending(true);
-    try { setRuntime(await apiRequest<RuntimeInfo>("/api/runtime/scheduler", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) })); }
-    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    beginOperation(enabled ? "Enabling scheduler" : "Disabling scheduler");
+    try { setRuntime(await apiRequest<RuntimeInfo>("/api/runtime/scheduler", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) })); completeOperation(enabled ? "Scheduler enabled" : "Scheduler disabled"); }
+    catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
   async function refreshHealth() {
     setPending(true);
+    beginOperation("Checking runtime health");
     try {
       const [state, runtimeInfo] = await Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")]);
       applyState(state);
       setRuntime(runtimeInfo);
-    } catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+      completeOperation("Runtime health refreshed");
+    } catch (error) { failOperation(error); }
     finally { setPending(false); }
   }
 
@@ -215,12 +262,15 @@ function App() {
     window.history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
   }
 
+  if (experience !== "app") return <Landing entering={experience === "entering"} onEnter={enterWorkspace} />;
+
   return (
     <div className="app-shell">
+      {(operation || notice) && <div className={`operation-toast ${operation ? "working" : "success"}`} role="status"><span className="toast-icon">{operation ? <RefreshCw size={17} /> : <Check size={17} />}</span><span><strong>{operation ?? notice}</strong><small>{operation ? "ReSource is executing this operation" : "Operation completed successfully"}</small></span>{operation && <span className="toast-progress" />}</div>}
       <aside className="sidebar">
         <div className="brand-mark" aria-label="ReSource">
-          <div className="brand-icon"><RefreshCw size={18} strokeWidth={2.4} /></div>
-          <span>ReSource</span>
+          <div className="brand-icon">R</div>
+          <span>ReSource<small>Autonomous buyer</small></span>
         </div>
         <nav className="nav-list" aria-label="Primary navigation">
           <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} onClick={() => navigate("overview")} title="Overview"><LayoutDashboard size={18} /><span>Overview</span></button>
@@ -232,6 +282,7 @@ function App() {
         <div className="sidebar-foot">
           <div className="network-line"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo adapter" : "KeeperHub adapter"}</div>
           <div className="network-meta">{executionMode === "demo" ? "No funds at risk" : integrationReady ? "Credentials loaded" : "Configuration required"}</div>
+          <button className="back-to-site" onClick={() => setExperience("landing")}><ArrowRight size={13} /> Back to site</button>
         </div>
       </aside>
 
@@ -242,6 +293,7 @@ function App() {
             <h1>{viewTitles[activeView].title}</h1>
           </div>
           <div className="top-actions">
+            <div className="live-clock"><span /> Live operations</div>
             {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : "KeeperHub"} <ChevronDown size={14} /></div>
           </div>
@@ -402,6 +454,61 @@ function App() {
   );
 }
 
+function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void }) {
+  return (
+    <div className={`landing ${entering ? "is-entering" : ""}`}>
+      <header className="landing-nav">
+        <a className="landing-brand" href="#top" aria-label="ReSource home"><span>R</span>ReSource</a>
+        <nav aria-label="Landing navigation"><a href="#system">System</a><a href="#proof">Proof</a></nav>
+        <button className="nav-launch" onClick={onEnter}>Open console <ArrowUpRight size={15} /></button>
+      </header>
+
+      <main id="top" className="landing-main">
+        <section className="landing-hero">
+          <div className="hero-grid" aria-hidden="true" />
+          <div className="hero-copy">
+            <div className="hero-kicker"><span /> Autonomous procurement infrastructure</div>
+            <h1>ReSource</h1>
+            <p className="hero-statement">Services fail.<br /><em>Your agent doesn’t.</em></p>
+            <p className="hero-description">A self-healing buyer that discovers, evaluates, pays, verifies, and replaces agent services before a broken provider becomes your problem.</p>
+            <div className="hero-actions">
+              <button className="hero-primary" onClick={onEnter}>Enter live workspace <ArrowRight size={18} /></button>
+              <a href="#system">Explore the system <ArrowUpRight size={16} /></a>
+            </div>
+          </div>
+
+          <div className="network-stage" aria-label="Live provider network visualization">
+            <div className="network-label top"><span>STANDING ORDER</span><strong>Transaction risk</strong></div>
+            <div className="network-core"><span className="core-ring" /><span className="core-letter">R</span></div>
+            <div className="route route-a"><i /><i /><i /></div>
+            <div className="route route-b"><i /><i /></div>
+            <div className="route route-c failed"><i /><i /></div>
+            <div className="provider-node node-a"><span>A</span><div><strong>Atlas Risk</strong><small>99.0% reliable</small></div><b>ACTIVE</b></div>
+            <div className="provider-node node-b"><span>S</span><div><strong>Sentinel Labs</strong><small>13.1s latency</small></div></div>
+            <div className="provider-node node-c"><span>V</span><div><strong>Veridian</strong><small>SLA rejected</small></div></div>
+            <div className="recovery-chip"><CheckCircle2 size={15} /><span><strong>Route recovered</strong><small>186ms ago</small></span></div>
+            <div className="network-stats"><span><small>UPTIME</small><strong>99.98%</strong></span><span><small>RECOVERIES</small><strong>24</strong></span><span><small>AVG SWITCH</small><strong>1.8s</strong></span></div>
+          </div>
+          <div className="hero-scroll"><span>01</span><i /><small>THE SYSTEM</small></div>
+        </section>
+
+        <section className="system-section" id="system">
+          <div className="section-index">01 / 03</div>
+          <div className="system-heading"><p>Built for agents that cannot stop.</p><h2>One standing order.<br />Continuous resilience.</h2></div>
+          <div className="system-flow" id="proof">
+            <article><span>01</span><Terminal /><h3>Define the need</h3><p>Set price, reliability, latency, and budget constraints once.</p></article>
+            <article><span>02</span><Bot /><h3>Source the market</h3><p>Continuously score competing providers against observed performance.</p></article>
+            <article><span>03</span><ShieldCheck /><h3>Verify every result</h3><p>Release payment only when output and service policy both pass.</p></article>
+            <article className="accent"><span>04</span><RefreshCw /><h3>Heal automatically</h3><p>Detect degradation, suspend the provider, and reroute the order.</p></article>
+          </div>
+        </section>
+      </main>
+
+      {entering && <div className="intro-overlay" aria-live="polite"><div className="intro-mark">R</div><div className="intro-copy"><strong>Initializing buyer runtime</strong><span><i />Policy engine</span><span><i />Provider market</span><span><i />Verification layer</span></div><div className="intro-line" /></div>}
+    </div>
+  );
+}
+
 function Metric({ icon, label, value, note, accent = false }: { icon: React.ReactNode; label: string; value: string; note: string; accent?: boolean }) {
   return <div className={`metric ${accent ? "accent" : ""}`}><div className="metric-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div></div>;
 }
@@ -423,8 +530,10 @@ function readInitialView(): ViewId {
 
 export default App;
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(`${apiBaseUrl}${url}`, init);
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(payload?.error ?? `Request failed with ${response.status}`);
   return payload as T;
