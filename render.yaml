@@ -1,17 +1,37 @@
 services:
   - type: web
     name: resource-api
-    runtime: node
-    plan: free
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /api/health
+    disk:
+      name: resource-data
+      mountPath: /app/storage
+      sizeGB: 1
     envVars:
-      - key: NODE_VERSION
-        value: 24.15.0
       - key: EXECUTION_MODE
-        value: demo
+        value: keeperhub
+      - key: DATA_DIR
+        value: /app/storage/data
       - key: SCHEDULER_ENABLED
         value: "false"
+      - key: SCHEDULER_POLL_MS
+        value: "30000"
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: OPERATOR_API_KEY
+        sync: false
+      - key: KEEPERHUB_API_URL
+        value: https://app.keeperhub.com/api
+      - key: KEEPERHUB_API_KEY
+        sync: false
+      - key: KEEPERHUB_MARKETPLACE_SLUGS
+        value: resource-sentinel-risk-provider,resource-atlas-risk-provider
+      - key: RESOURCE_BUYER_ADDRESS
+        sync: false
+      - key: RESOURCE_RISK_CONTRACT
+        value: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+      - key: RESOURCE_RISK_CALLDATA
+        value: 0xa9059cbb000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000f4240

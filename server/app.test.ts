@@ -92,4 +92,18 @@ describe("procurement API", () => {
     const provider = response.json().providers.find((item: { id: string }) => item.id === "veridian");
     expect(provider).toMatchObject({ state: "healthy", reliability: 1, attempts: 0 });
   });
+
+  it("requires the operator key for mutations when configured", async () => {
+    const previous = process.env.OPERATOR_API_KEY;
+    process.env.OPERATOR_API_KEY = "test-operator-key";
+    try {
+      const rejected = await app.inject({ method: "POST", url: "/api/standing-orders/toggle" });
+      const accepted = await app.inject({ method: "POST", url: "/api/standing-orders/toggle", headers: { "x-resource-operator-key": "test-operator-key" } });
+      expect(rejected.statusCode).toBe(401);
+      expect(accepted.statusCode).toBe(200);
+    } finally {
+      if (previous === undefined) delete process.env.OPERATOR_API_KEY;
+      else process.env.OPERATOR_API_KEY = previous;
+    }
+  });
 });

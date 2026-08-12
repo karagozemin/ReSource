@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { timingSafeEqual } from "node:crypto";
 import type { StandingOrderUpdate } from "../src/types";
 import type { ProcurementOrchestrator } from "./orchestrator";
 import type { TriggerEngine } from "./scheduler";
@@ -18,9 +19,20 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
         else callback(null, false);
       },
       methods: ["GET", "POST", "PATCH", "OPTIONS"],
-      allowedHeaders: ["content-type", "idempotency-key"],
+      allowedHeaders: ["content-type", "idempotency-key", "x-resource-operator-key"],
     });
   }
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (!isMutation(request.method)) return;
+    const expected = process.env.OPERATOR_API_KEY;
+    if (!expected) {
+      if (process.env.NODE_ENV === "production") return reply.code(503).send({ error: "Operator authorization is not configured" });
+      return;
+    }
+    const provided = request.headers["x-resource-operator-key"];
+    if (typeof provided !== "string" || !secureEqual(provided, expected)) return reply.code(401).send({ error: "Operator authorization required" });
+  });
 
   app.get("/api/health", async () => ({ ok: true, mode: orchestrator.snapshot().executionMode }));
   app.get("/api/state", async () => orchestrator.snapshot());
@@ -78,4 +90,12 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
   });
 
   return app;
+}
+
+function isMutation(method: string) { return method === "POST" || method === "PATCH" || method === "PUT" || method === "DELETE"; }
+
+function secureEqual(provided: string, expected: string) {
+  const left = Buffer.from(provided);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
 }

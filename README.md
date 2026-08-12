@@ -184,7 +184,9 @@ ReSource/
 │   ├── KEEPERHUB.md            # KeeperHub boundary notes
 │   └── KEEPERHUB_FRICTION_LOG.md
 ├── data/                       # Local runtime.json (generated and gitignored)
-├── render.yaml                 # API deployment definition
+├── scripts/                    # Render wallet export and startup checks
+├── Dockerfile                  # Live Render runtime with verified onchainos CLI
+├── render.yaml                 # Live KeeperHub API deployment definition
 ├── vercel.json                 # Vite web deployment definition
 └── package.json
 ```
@@ -254,6 +256,7 @@ Each interval bucket produces a stable key such as `schedule:SO-001:<bucket>`. R
 | `PORT` | No | API port, default `8787`. |
 | `HOST` | No | API bind host, default `0.0.0.0`. |
 | `FRONTEND_ORIGIN` | Production | Comma-separated CORS allowlist. CORS is registered only when this is non-empty. |
+| `OPERATOR_API_KEY` | Production | Required as `x-resource-operator-key` for every state-changing API request. |
 | `DATA_DIR` | No | State directory, default `./data`. |
 | `SCHEDULER_ENABLED` | No | Starts the in-process trigger only when exactly `true`; default `false`. |
 | `SCHEDULER_POLL_MS` | No | Trigger polling interval, default `30000`. |
@@ -306,6 +309,7 @@ Live evidence is written to `data/runtime.json`. The file is intentionally ignor
 - Provider failure immediately suspends that provider. Automatic failover never bypasses payment authorization.
 - Direct execution requires simulation before the separate broadcast action and uses a unique KeeperHub idempotency key.
 - Wallet command errors are reduced to stable messages before persistence; backend secrets are not returned in application state.
+- Every production POST/PATCH endpoint requires a timing-safe operator-key check. The browser stores the key in session storage only, never in the Vite bundle.
 
 ## Testing
 
@@ -319,9 +323,47 @@ Vitest covers hard eligibility filters, deterministic ranking, failure suspensio
 
 ## Deployment
 
-[`vercel.json`](vercel.json) builds the React/Vite client. [`render.yaml`](render.yaml) builds and starts the Fastify API in demo mode with `/api/health` as its health check. Set `VITE_API_BASE_URL` on Vercel and `FRONTEND_ORIGIN` on Render to connect the split deployment.
+[`vercel.json`](vercel.json) deploys the React client. [`render.yaml`](render.yaml) deploys the API as a live KeeperHub Docker service, installs the checksum-verified Linux `onchainos` CLI and mounts a persistent disk at `/app/storage`.
 
-Render's free filesystem is ephemeral. Use a persistent disk with `DATA_DIR=/var/data` or replace the JSON store before relying on retained state. Keep the scheduler off until persistence, API access control and spending operations are production-ready.
+### 1. Export the authenticated wallet runtime
+
+Run this only on the authenticated operator machine:
+
+```bash
+sh scripts/export-render-wallet.sh
+```
+
+This creates the gitignored `render-wallet.b64`. In the Render service, open **Environment → Secret Files**, create a file named `onchainos-wallet.b64`, and paste the file contents. Render mounts it at `/etc/secrets/onchainos-wallet.b64`; startup extracts it into the persistent runtime home and fails closed unless `onchainos wallet status` reports an authenticated session.
+
+Never commit, log or publish `render-wallet.b64`. Treat it as a wallet credential and rotate it by logging out/re-authenticating locally, exporting again and replacing the Render secret file.
+
+### 2. Create the Render Blueprint
+
+Connect this repository with **New → Blueprint**. The root directory remains empty because `render.yaml` is at repository root. The Blueprint uses the paid `starter` plan because Render persistent disks are unavailable on the free plan.
+
+Set these unsynced Render values:
+
+```text
+FRONTEND_ORIGIN=https://<vercel-project>.vercel.app
+KEEPERHUB_API_KEY=<backend KeeperHub key>
+RESOURCE_BUYER_ADDRESS=<Agentic Wallet EVM address>
+```
+
+Generate a strong value locally with `openssl rand -hex 32`, set it as Render's `OPERATOR_API_KEY`, and use the same value only in the dashboard's **Unlock** dialog. Do not add it to Vercel.
+
+The Blueprint fixes `EXECUTION_MODE=keeperhub`, keeps `SCHEDULER_ENABLED=false`, persists state under `/app/storage/data`, and checks `/api/health`.
+
+### 3. Deploy Vercel
+
+Use repository root, Vite, build command `npm run build`, and output directory `dist`. Add one Vercel variable:
+
+```text
+VITE_API_BASE_URL=https://<render-service>.onrender.com
+```
+
+Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In the site, open the workspace, select **Unlock**, enter `OPERATOR_API_KEY`, and then run the quote → review → authorization flow. The operator key lives only until that browser tab/session is closed.
+
+The scheduler must remain off. It may create quotes automatically, but all payments still require the explicit dashboard authorization gate mandated by the **OKX Agent Payments Protocol**.
 
 ## Known limitations
 
@@ -333,7 +375,7 @@ Render's free filesystem is ephemeral. Use a persistent disk with `DATA_DIR=/var
 - Tie-breaking relies on stable catalog order rather than an explicit secondary key.
 - JSON persistence and the mutation queue are safe only for one server process. There is no database transaction or distributed lock.
 - The scheduler is in-process and runtime toggles are not persisted; startup is controlled by `SCHEDULER_ENABLED`.
-- The HTTP control API has CORS filtering but no authentication or authorization. It must not be exposed as a production spending API in its current form.
+- Operator access uses one shared runtime secret rather than user accounts, roles or expiring server-issued sessions.
 - The wallet integration starts an `onchainos` subprocess per quote/payment; there is no long-running wallet service boundary.
 - Direct execution is fixed to a Base Sepolia zero-value self-transfer. It proves the KeeperHub execution path, not arbitrary policy-derived writes.
 - MPP, smart contracts, multi-order tenancy and multi-chain procurement are not implemented.
@@ -353,7 +395,7 @@ Render's free filesystem is ephemeral. Use a persistent disk with `DATA_DIR=/var
 
 1. Add the public demo video URL and repository URL to the submission.
 2. Replace cumulative spend with a dated ledger and reserve budget at quote time.
-3. Add authenticated operator access and a transactional database before enabling unattended production scheduling.
+3. Replace the shared operator key with expiring server-issued sessions and a transactional database before enabling unattended production scheduling.
 4. Generalize result validators and provider inputs beyond transaction-risk intelligence.
 
 The project is **ReSource**. “ProcureAgent” was an earlier codename and is not the current product name.

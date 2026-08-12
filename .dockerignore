@@ -1,12 +1,10 @@
 node_modules
 dist
+.git
 .env
-.DS_Store
-coverage
 data/runtime.json
 data/*.tmp
+render-wallet.b64
+coverage
 *.log
 *.tsbuildinfo
-render-wallet.b64
-vite.config.js
-vite.config.d.ts

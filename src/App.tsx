@@ -14,6 +14,7 @@ import {
   HeartPulse,
   History,
   LayoutDashboard,
+  LockKeyhole,
   Pause,
   Play,
   RefreshCw,
@@ -73,11 +74,20 @@ function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null } });
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [operatorDialogOpen, setOperatorDialogOpen] = useState(false);
+  const [operatorKeyInput, setOperatorKeyInput] = useState("");
+  const [operatorUnlocked, setOperatorUnlocked] = useState(() => Boolean(sessionStorage.getItem("resource-operator-key")));
 
   useEffect(() => {
     void Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")])
       .then(([state, runtimeInfo]) => { applyState(state); setRuntime(runtimeInfo); })
       .catch((error) => setRequestError(error.message));
+  }, []);
+
+  useEffect(() => {
+    const showOperatorDialog = () => { setOperatorUnlocked(Boolean(sessionStorage.getItem("resource-operator-key"))); setOperatorDialogOpen(true); };
+    window.addEventListener("resource-auth-required", showOperatorDialog);
+    return () => window.removeEventListener("resource-auth-required", showOperatorDialog);
   }, []);
 
   const decisions = useMemo(
@@ -262,11 +272,30 @@ function App() {
     window.history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
   }
 
+  function saveOperatorKey() {
+    const value = operatorKeyInput.trim();
+    if (!value) return;
+    sessionStorage.setItem("resource-operator-key", value);
+    setOperatorUnlocked(true);
+    setOperatorKeyInput("");
+    setOperatorDialogOpen(false);
+    setNotice("Operator session unlocked");
+    setRequestError(null);
+  }
+
+  function lockOperatorSession() {
+    sessionStorage.removeItem("resource-operator-key");
+    setOperatorUnlocked(false);
+    setOperatorDialogOpen(false);
+    setNotice("Operator session locked");
+  }
+
   if (experience !== "app") return <Landing entering={experience === "entering"} onEnter={enterWorkspace} />;
 
   return (
     <div className="app-shell">
       {(operation || notice) && <div className={`operation-toast ${operation ? "working" : "success"}`} role="status"><span className="toast-icon">{operation ? <RefreshCw size={17} /> : <Check size={17} />}</span><span><strong>{operation ?? notice}</strong><small>{operation ? "ReSource is executing this operation" : "Operation completed successfully"}</small></span>{operation && <span className="toast-progress" />}</div>}
+      {operatorDialogOpen && <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOperatorDialogOpen(false); }}><form className="operator-dialog" onSubmit={(event) => { event.preventDefault(); saveOperatorKey(); }}><div className="operator-dialog-icon"><LockKeyhole size={20} /></div><div><div className="eyebrow">Protected runtime</div><h2>Unlock operator controls</h2><p>Enter the Render operator key for this browser session.</p></div><label><span>Operator key</span><input autoFocus type="password" autoComplete="off" value={operatorKeyInput} onChange={(event) => setOperatorKeyInput(event.target.value)} /></label><div className="operator-dialog-actions">{operatorUnlocked && <button type="button" className="secondary-button" onClick={lockOperatorSession}>Lock session</button>}<button type="button" className="secondary-button" onClick={() => setOperatorDialogOpen(false)}>Cancel</button><button type="submit" className="primary-button fit" disabled={!operatorKeyInput.trim()}>Unlock</button></div></form></div>}
       <aside className="sidebar">
         <div className="brand-mark" aria-label="ReSource">
           <div className="brand-icon"><img src="/brand/resource-mark-192.png" alt="" /></div>
@@ -294,6 +323,7 @@ function App() {
           </div>
           <div className="top-actions">
             <div className="live-clock"><span /> Live operations</div>
+            <button className={`operator-button ${operatorUnlocked ? "unlocked" : ""}`} onClick={() => setOperatorDialogOpen(true)}><LockKeyhole size={14} />{operatorUnlocked ? "Operator" : "Unlock"}</button>
             {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : "KeeperHub"} <ChevronDown size={14} /></div>
           </div>
@@ -370,7 +400,8 @@ function App() {
                 <dl>
                   <div><dt>Network</dt><dd>{pendingPayment.chainName} ({pendingPayment.chainId})</dd></div>
                   <div><dt>Provider</dt><dd>{providers.find((provider) => provider.id === pendingPayment.providerId)?.name ?? pendingPayment.providerId}</dd></div>
-                  <div><dt>Pay to</dt><dd>{shortAddress(pendingPayment.recipient)}</dd></div>
+                  <div><dt>Protocol</dt><dd>OKX Agent Payments Protocol</dd></div>
+                  <div><dt>Pay to</dt><dd>{pendingPayment.recipient}</dd></div>
                 </dl>
               </div>
             )}
@@ -521,8 +552,6 @@ function Step({ number, label, done }: { number: string; label: string; done: bo
   return <div className={`demo-step ${done ? "done" : ""}`}><span>{done ? <Check size={13} /> : number}</span>{label}</div>;
 }
 
-function shortAddress(value: string) { return `${value.slice(0, 8)}...${value.slice(-6)}`; }
-
 function readInitialView(): ViewId {
   const candidate = window.location.hash.slice(1);
   return Object.hasOwn(viewTitles, candidate) ? candidate as ViewId : "overview";
@@ -533,8 +562,18 @@ export default App;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${url}`, init);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  if (["POST", "PATCH", "PUT", "DELETE"].includes(method)) {
+    const operatorKey = sessionStorage.getItem("resource-operator-key");
+    if (operatorKey) headers.set("x-resource-operator-key", operatorKey);
+  }
+  const response = await fetch(`${apiBaseUrl}${url}`, { ...init, headers });
   const payload = await response.json().catch(() => null);
+  if (response.status === 401) {
+    sessionStorage.removeItem("resource-operator-key");
+    window.dispatchEvent(new Event("resource-auth-required"));
+  }
   if (!response.ok) throw new Error(payload?.error ?? `Request failed with ${response.status}`);
   return payload as T;
 }
