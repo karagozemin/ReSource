@@ -162,7 +162,7 @@ function App() {
                 {mode === "recovering" ? "Automatic recovery in progress" : mode === "running" ? "Procurement cycle running" : isPaused ? "Standing order paused" : selected ? "Service requirement satisfied" : "Ready to procure"}
               </div>
               <div className="health-detail">
-                {selected ? `${selected.name} currently supplies wallet risk intelligence.` : "One active Standing Order is waiting for execution."}
+                {selected ? `${selected.name} currently supplies transaction risk intelligence.` : "One active Standing Order is waiting for execution."}
               </div>
             </div>
           </div>

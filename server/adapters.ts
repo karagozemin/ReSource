@@ -26,7 +26,7 @@ export class DemoExecutionAdapter implements ExecutionAdapter {
       executionId: `demo_${randomUUID()}`,
       success: true,
       latencyMs: provider.latencyMs,
-      output: { riskLevel: "low", verified: true, source: provider.id },
+      output: { riskLevel: "low", riskScore: 18, factors: [], verified: true, source: provider.id },
       transactionHash: null,
       error: null,
     };

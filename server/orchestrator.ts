@@ -12,7 +12,10 @@ export class ProcurementOrchestrator {
   constructor(private readonly store: StateStore, private readonly adapter: ExecutionAdapter) {}
 
   async initialize() {
-    this.state = (await this.store.load()) ?? createInitialState(this.adapter.mode);
+    const persisted = await this.store.load();
+    this.state = persisted && persisted.executionMode === this.adapter.mode
+      ? migrateState(persisted, this.adapter.mode)
+      : createInitialState(this.adapter.mode);
     this.state.executionMode = this.adapter.mode;
     this.state.integrationReady = this.adapter.isReady();
     if (this.state.mode === "running" || this.state.mode === "recovering") this.state.mode = "ready";
@@ -105,12 +108,21 @@ export class ProcurementOrchestrator {
     }
 
     this.addEvent("success", "Result verified", "Provider response schema and SLA checks passed.");
-    this.addEvent("success", "KeeperHub execution complete", result.transactionHash ? `Onchain write confirmed: ${shortHash(result.transactionHash)}` : "Demo adapter confirmed the lifecycle. No transaction sent.");
-    this.state.metrics.purchases += 1;
+    const isSimulatedPurchase = this.adapter.mode === "demo";
+    this.addEvent(
+      "success",
+      this.adapter.mode === "keeperhub" ? "KeeperHub workflow complete" : "Demo execution complete",
+      result.transactionHash
+        ? `Onchain write confirmed: ${shortHash(result.transactionHash)}`
+        : this.adapter.mode === "keeperhub"
+          ? "Organization workflow succeeded. No payment or onchain transaction was recorded."
+          : "Demo adapter confirmed the simulated lifecycle. No payment or transaction sent.",
+    );
+    if (isSimulatedPurchase) this.state.metrics.purchases += 1;
     this.state.metrics.executions += 1;
-    this.state.metrics.spend += winner.provider.price;
+    if (isSimulatedPurchase) this.state.metrics.spend += winner.provider.price;
     this.state.mode = "healthy";
-    const cycle = makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "completed", winner.provider.price, result.executionId, result.transactionHash, null);
+    const cycle = makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "completed", isSimulatedPurchase ? winner.provider.price : 0, result.executionId, result.transactionHash, null);
     this.state.cycles.unshift(cycle);
     await this.store.save(this.state);
     return { state: this.snapshot(), cycle, replayed: false };
@@ -148,7 +160,24 @@ export class ProcurementOrchestrator {
 }
 
 function verifyResult(output: unknown, latencyMs: number, maxLatencyMs: number) {
-  return output !== null && typeof output === "object" && latencyMs <= maxLatencyMs;
+  if (latencyMs > maxLatencyMs) return false;
+  const result = unwrapOutput(output);
+  if (!result || typeof result !== "object") return false;
+  const value = result as Record<string, unknown>;
+  return ["low", "medium", "high", "critical"].includes(String(value.riskLevel))
+    && typeof value.riskScore === "number"
+    && value.riskScore >= 0
+    && value.riskScore <= 100
+    && Array.isArray(value.factors);
+}
+
+function unwrapOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object") return output;
+  const value = output as Record<string, unknown>;
+  if ("riskLevel" in value) return value;
+  if (value.data && typeof value.data === "object") return unwrapOutput(value.data);
+  const entries = Object.values(value);
+  return entries.length === 1 ? unwrapOutput(entries[0]) : output;
 }
 
 function makeCycle(id: string, idempotencyKey: string, standingOrderId: string, selectedProviderId: string | null, status: ProcurementCycle["status"], amount: number, executionId: string | null, transactionHash: string | null, error: string | null): ProcurementCycle {
@@ -157,3 +186,16 @@ function makeCycle(id: string, idempotencyKey: string, standingOrderId: string, 
 }
 
 function shortHash(hash: string) { return `${hash.slice(0, 8)}…${hash.slice(-6)}`; }
+
+function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState {
+  if (state.schemaVersion === 3) return state;
+  const migrated = { ...state, schemaVersion: 3 as const };
+  if (mode === "keeperhub") {
+    migrated.metrics = { ...migrated.metrics, purchases: 0, spend: 0 };
+    migrated.cycles = migrated.cycles.map((cycle) => ({ ...cycle, amount: 0 }));
+    migrated.events = migrated.events.map((event) => event.title === "KeeperHub execution complete"
+      ? { ...event, title: "KeeperHub workflow complete", detail: "Organization workflow succeeded. No payment or onchain transaction was recorded." }
+      : event);
+  }
+  return migrated;
+}

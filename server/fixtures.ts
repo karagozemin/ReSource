@@ -3,6 +3,7 @@ import { initialEvents, initialMetrics, initialProviders, standingOrder } from "
 
 export function createInitialState(executionMode: AppState["executionMode"]): AppState {
   return {
+    schemaVersion: 3,
     order: structuredClone(standingOrder),
     providers: structuredClone(initialProviders),
     events: structuredClone(initialEvents),

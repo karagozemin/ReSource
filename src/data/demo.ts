@@ -2,8 +2,8 @@ import type { Metrics, Provider, StandingOrder, TimelineEvent } from "../types";
 
 export const standingOrder: StandingOrder = {
   id: "SO-001",
-  service: "Wallet Risk Intelligence",
-  description: "Analyze target wallet risk before treasury execution.",
+  service: "Transaction Risk Intelligence",
+  description: "Assess transaction calldata risk before onchain execution.",
   intervalMinutes: 10,
   maxPrice: 0.06,
   dailyBudget: 2,
@@ -17,7 +17,7 @@ export const initialProviders: Provider[] = [
   {
     id: "atlas",
     name: "Atlas Risk",
-    workflow: "wallet-risk-atlas",
+    workflow: "transaction-risk-atlas",
     price: 0.05,
     reliability: 0.99,
     latencyMs: 8_200,
@@ -27,7 +27,7 @@ export const initialProviders: Provider[] = [
   {
     id: "sentinel",
     name: "Sentinel Labs",
-    workflow: "wallet-risk-sentinel",
+    workflow: "transaction-risk-sentinel",
     price: 0.03,
     reliability: 0.96,
     latencyMs: 13_100,
@@ -37,7 +37,7 @@ export const initialProviders: Provider[] = [
   {
     id: "veridian",
     name: "Veridian Data",
-    workflow: "wallet-risk-veridian",
+    workflow: "transaction-risk-veridian",
     price: 0.02,
     reliability: 0.98,
     latencyMs: 31_400,

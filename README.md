@@ -12,7 +12,7 @@ This repository currently ships a working product slice:
 
 - an operational dashboard that explains the product in one screen;
 - a deterministic policy and provider scoring engine;
-- three competing wallet-risk providers;
+- three competing transaction-risk providers;
 - price, daily budget, latency, reliability and paused-order guards;
 - a live purchase lifecycle simulation;
 - provider degradation, suspension and automatic failover from Sentinel Labs to Atlas Risk;

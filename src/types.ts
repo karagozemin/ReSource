@@ -66,6 +66,7 @@ export type ProcurementCycle = {
 };
 
 export type AppState = {
+  schemaVersion: 3;
   order: StandingOrder;
   providers: Provider[];
   events: TimelineEvent[];
