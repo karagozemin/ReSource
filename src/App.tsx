@@ -269,7 +269,7 @@ function App() {
       {(operation || notice) && <div className={`operation-toast ${operation ? "working" : "success"}`} role="status"><span className="toast-icon">{operation ? <RefreshCw size={17} /> : <Check size={17} />}</span><span><strong>{operation ?? notice}</strong><small>{operation ? "ReSource is executing this operation" : "Operation completed successfully"}</small></span>{operation && <span className="toast-progress" />}</div>}
       <aside className="sidebar">
         <div className="brand-mark" aria-label="ReSource">
-          <div className="brand-icon">R</div>
+          <div className="brand-icon"><img src="/brand/resource-mark-192.png" alt="" /></div>
           <span>ReSource<small>Autonomous buyer</small></span>
         </div>
         <nav className="nav-list" aria-label="Primary navigation">
@@ -458,7 +458,7 @@ function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void
   return (
     <div className={`landing ${entering ? "is-entering" : ""}`}>
       <header className="landing-nav">
-        <a className="landing-brand" href="#top" aria-label="ReSource home"><span>R</span>ReSource</a>
+        <a className="landing-brand" href="#top" aria-label="ReSource home"><span><img src="/brand/resource-mark-192.png" alt="" /></span>ReSource</a>
         <nav aria-label="Landing navigation"><a href="#system">System</a><a href="#proof">Proof</a></nav>
         <button className="nav-launch" onClick={onEnter}>Open console <ArrowUpRight size={15} /></button>
       </header>
@@ -479,7 +479,7 @@ function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void
 
           <div className="network-stage" aria-label="Live provider network visualization">
             <div className="network-label top"><span>STANDING ORDER</span><strong>Transaction risk</strong></div>
-            <div className="network-core"><span className="core-ring" /><span className="core-letter">R</span></div>
+            <div className="network-core"><span className="core-ring" /><img className="core-mark" src="/brand/resource-mark-192.png" alt="" /></div>
             <div className="route route-a"><i /><i /><i /></div>
             <div className="route route-b"><i /><i /></div>
             <div className="route route-c failed"><i /><i /></div>
@@ -504,7 +504,7 @@ function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void
         </section>
       </main>
 
-      {entering && <div className="intro-overlay" aria-live="polite"><div className="intro-mark">R</div><div className="intro-copy"><strong>Initializing buyer runtime</strong><span><i />Policy engine</span><span><i />Provider market</span><span><i />Verification layer</span></div><div className="intro-line" /></div>}
+      {entering && <div className="intro-overlay" aria-live="polite"><div className="intro-mark"><img src="/brand/resource-mark-512.png" alt="" /></div><div className="intro-copy"><strong>Initializing buyer runtime</strong><span><i />Policy engine</span><span><i />Provider market</span><span><i />Verification layer</span></div><div className="intro-line" /></div>}
     </div>
   );
 }

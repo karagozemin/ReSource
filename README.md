@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/resource-readme.png" alt="ReSource" width="320" />
+</p>
+
 # ReSource
 
 **The self-healing buyer for agent services.**

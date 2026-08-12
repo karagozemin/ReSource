@@ -383,7 +383,8 @@ body { background: var(--paper); }
 .landing-main { padding: 0; }
 .landing-nav { position: absolute; inset: 0 0 auto; height: 82px; padding: 0 clamp(24px, 5vw, 78px); border-bottom: 1px solid rgba(255,255,255,.11); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; z-index: 20; }
 .landing-brand { display: inline-flex; align-items: center; gap: 11px; color: #faf9f3; font-size: 17px; font-weight: 700; text-decoration: none; }
-.landing-brand span { width: 30px; height: 30px; border: 1px solid rgba(255,255,255,.3); display: grid; place-items: center; color: var(--coral); font: 500 15px/1 "DM Mono", monospace; }
+.landing-brand span { width: 32px; height: 32px; border: 1px solid rgba(255,255,255,.3); display: grid; place-items: center; background: #f8f5ed; overflow: hidden; }
+.landing-brand img, .brand-icon img, .intro-mark img, .core-mark { width: 100%; height: 100%; display: block; object-fit: cover; }
 .landing-nav nav { display: flex; gap: 34px; }
 .landing-nav nav a { color: #a9ada6; font-size: 11px; font-weight: 600; text-decoration: none; }
 .landing-nav nav a:hover { color: white; }
@@ -416,7 +417,7 @@ body { background: var(--paper); }
 .network-core::before { inset: -18px; }
 .network-core::after { inset: -42px; animation-delay: 1s; }
 .core-ring { inset: 6px; border-color: rgba(255,255,255,.16); background: #171a16; box-shadow: 0 0 55px rgba(255,101,76,.2); }
-.core-letter { position: relative; color: var(--coral); font: 500 24px/1 "DM Mono", monospace; }
+.core-mark { position: relative; width: 50px; height: 50px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1px rgba(255,255,255,.13); }
 .route { position: absolute; height: 1px; transform-origin: left center; background: rgba(255,255,255,.14); }
 .route::after { content: ""; position: absolute; inset: -1px auto -1px 0; width: 28%; background: var(--coral); box-shadow: 0 0 10px rgba(255,101,76,.9); animation: routeFlow 2.8s ease-in-out infinite; }
 .route i { position: absolute; width: 5px; height: 5px; border: 1px solid rgba(255,255,255,.25); background: #11130f; transform: translate(-50%,-50%); }
@@ -456,7 +457,7 @@ body { background: var(--paper); }
 .system-flow article.accent { color: white; background: var(--coral); }.system-flow article.accent p, .system-flow article.accent > span { color: rgba(255,255,255,.7); }.system-flow article.accent svg { color: white; }
 
 .intro-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; color: #f7f6f0; background: #10120f; animation: introReveal 1.5s ease both; }
-.intro-mark { position: absolute; left: 50%; top: 41%; color: var(--coral); font: 500 62px/1 "DM Mono", monospace; transform: translate(-50%,-50%); animation: introMark 1.2s ease both; }
+.intro-mark { position: absolute; left: 50%; top: 41%; width: 94px; height: 94px; border: 1px solid rgba(255,255,255,.18); background: #f7f4ec; transform: translate(-50%,-50%); animation: introMark 1.2s ease both; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.28); }
 .intro-copy { position: absolute; left: 50%; top: 55%; width: 230px; display: grid; gap: 8px; transform: translateX(-50%); }
 .intro-copy strong { margin-bottom: 5px; font-size: 11px; text-align: center; }.intro-copy span { display: flex; align-items: center; gap: 8px; color: #747a72; font: 500 8px/1 "DM Mono", monospace; animation: introItem .4s ease both; }.intro-copy span:nth-child(3) { animation-delay: .2s; }.intro-copy span:nth-child(4) { animation-delay: .4s; }.intro-copy i { width: 5px; height: 5px; background: var(--coral); }
 .intro-line { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--coral); animation: introProgress 1.35s ease both; }
@@ -465,7 +466,7 @@ body { background: var(--paper); }
 .sidebar { padding: 28px 18px 20px; background: #111310; }
 .brand-mark { gap: 12px; padding-bottom: 32px; }
 .brand-mark > span { display: grid; font-size: 16px; }.brand-mark > span small { margin-top: 2px; color: #686e67; font: 500 7px/1 "DM Mono", monospace; text-transform: uppercase; }
-.brand-icon { border: 1px solid #3d423b; border-radius: 2px; color: var(--coral); background: transparent; font: 500 14px/1 "DM Mono", monospace; }
+.brand-icon { border: 1px solid #3d423b; border-radius: 2px; background: #f8f5ed; overflow: hidden; }
 .nav-list { gap: 6px; }.nav-item { height: 44px; border-radius: 2px; color: #7e857d; }.nav-item:hover { background: #1b1e19; }.nav-item.active { color: #f1f1eb; background: #20221d; }.nav-item.active::before { background: var(--coral); }.nav-item.active svg { color: var(--coral); }
 .sidebar-foot { padding: 17px 9px 0; }.back-to-site { margin-top: 16px; padding: 0; border: 0; display: flex; align-items: center; gap: 6px; color: #656c64; background: transparent; font-size: 9px; cursor: pointer; }.back-to-site svg { transform: rotate(180deg); }
 .app-shell > main { padding: 28px 34px 18px; }
