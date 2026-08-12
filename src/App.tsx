@@ -71,7 +71,7 @@ function App() {
   const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
   const [directProof, setDirectProof] = useState<DirectProof>({ status: "ready", chainId: "84532", network: "Base Sepolia", from: null, to: null, gasEstimate: null, executionId: null, transactionHash: null, transactionLink: null, error: null });
   const [cycles, setCycles] = useState<ProcurementCycle[]>([]);
-  const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null } });
+  const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null }, sponsoredDemo: { enabled: false, spendCap: null, remaining: null } });
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [operatorDialogOpen, setOperatorDialogOpen] = useState(false);
@@ -98,6 +98,7 @@ function App() {
   const selected = providers.find((provider) => provider.id === selectedId) ?? null;
   const isPaused = order.status === "paused";
   const busy = pending || mode === "running" || mode === "recovering";
+  const sponsoredDemo = executionMode === "keeperhub" && runtime.sponsoredDemo?.enabled === true;
 
   useEffect(() => {
     if (!notice) return;
@@ -179,7 +180,10 @@ function App() {
     setMode("running");
     beginOperation("Authorizing and verifying payment");
     try {
-      const response = await apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, { method: "POST" });
+      const response = await apiRequest<{ state: AppState; needsReconfirmation?: boolean }>(`/api/procurement/${pendingPayment.cycleId}/confirm-payment`, {
+        method: "POST",
+        headers: { "x-resource-payment-confirmation": pendingPayment.cycleId },
+      });
       applyState(response.state);
       completeOperation("Payment settled and result verified");
       if (response.needsReconfirmation) setRequestError("Payment quote expired and was refreshed. Review the new terms, then authorize again.");
@@ -323,7 +327,9 @@ function App() {
           </div>
           <div className="top-actions">
             <div className="live-clock"><span /> Live operations</div>
-            <button className={`operator-button ${operatorUnlocked ? "unlocked" : ""}`} onClick={() => setOperatorDialogOpen(true)}><LockKeyhole size={14} />{operatorUnlocked ? "Operator" : "Unlock"}</button>
+            {sponsoredDemo
+              ? <div className="operator-button unlocked sponsored-status"><Sparkles size={14} />Sponsored live</div>
+              : <button className={`operator-button ${operatorUnlocked ? "unlocked" : ""}`} onClick={() => setOperatorDialogOpen(true)}><LockKeyhole size={14} />{operatorUnlocked ? "Operator" : "Unlock"}</button>}
             {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : "KeeperHub"} <ChevronDown size={14} /></div>
           </div>
@@ -396,20 +402,22 @@ function App() {
             </div>
             {pendingPayment && (
               <div className="payment-authorization">
-                <div><span>Payment authorization</span><strong>{pendingPayment.amount.toFixed(2)} {pendingPayment.token}</strong></div>
+                <div><span>{sponsoredDemo ? "Sponsored payment confirmation" : "Payment authorization"}</span><strong>{pendingPayment.amount.toFixed(2)} {pendingPayment.token}</strong></div>
                 <dl>
                   <div><dt>Network</dt><dd>{pendingPayment.chainName} ({pendingPayment.chainId})</dd></div>
                   <div><dt>Provider</dt><dd>{providers.find((provider) => provider.id === pendingPayment.providerId)?.name ?? pendingPayment.providerId}</dd></div>
-                  <div><dt>Protocol</dt><dd>OKX Agent Payments Protocol</dd></div>
+                  <div><dt>Protocol</dt><dd><strong>OKX Agent Payments Protocol</strong></dd></div>
+                  <div><dt>Atomic amount</dt><dd>{Math.round(pendingPayment.amount * 1_000_000)} units</dd></div>
                   <div><dt>Pay to</dt><dd>{pendingPayment.recipient}</dd></div>
                 </dl>
+                {sponsoredDemo && <small>ReSource sponsors this live purchase. No wallet connection or operator key is required.</small>}
               </div>
             )}
             <div className="action-buttons">
               {pendingPayment ? (
                 <>
                   <button className="primary-button" onClick={confirmPayment} disabled={busy}><WalletCards size={17} />{busy ? "Payment running" : `Authorize ${pendingPayment.amount.toFixed(2)} ${pendingPayment.token}`}</button>
-                  {executionMode === "keeperhub" && <button className="icon-button in-panel" onClick={injectFailure} disabled={busy} title="Simulate provider SLA breach" aria-label="Simulate provider SLA breach"><TriangleAlert size={17} /></button>}
+                  {executionMode === "keeperhub" && !sponsoredDemo && <button className="icon-button in-panel" onClick={injectFailure} disabled={busy} title="Simulate provider SLA breach" aria-label="Simulate provider SLA breach"><TriangleAlert size={17} /></button>}
                 </>
               ) : selectedId === "sentinel" && executionMode === "demo" ? (
                 <button className="danger-button" onClick={injectFailure} disabled={busy}><TriangleAlert size={17} />Inject provider failure</button>
@@ -422,7 +430,11 @@ function App() {
               <div className="direct-proof">
                 <div><span>Direct onchain proof</span><strong>{directProof.network}</strong></div>
                 <small>{directProof.status === "ready" ? "Safe first-write sequence is ready." : directProof.status === "simulated" ? `Simulation passed · ${directProof.gasEstimate} gas` : directProof.status === "completed" ? "KeeperHub transaction confirmed" : directProof.error ?? "Direct proof failed"}</small>
-                {directProof.transactionLink ? <a href={directProof.transactionLink} target="_blank" rel="noreferrer">View transaction <ExternalLink size={13} /></a> : <button className="secondary-button" onClick={() => runDirectProof(directProof.status === "simulated" ? "broadcast" : "simulate")} disabled={busy}>{directProof.status === "simulated" ? <Zap size={15} /> : <ShieldCheck size={15} />}{directProof.status === "simulated" ? "Broadcast proof" : "Simulate proof"}</button>}
+                {directProof.transactionLink
+                  ? <a href={directProof.transactionLink} target="_blank" rel="noreferrer">View transaction <ExternalLink size={13} /></a>
+                  : sponsoredDemo
+                    ? <span className="locked-value">Operator only</span>
+                    : <button className="secondary-button" onClick={() => runDirectProof(directProof.status === "simulated" ? "broadcast" : "simulate")} disabled={busy}>{directProof.status === "simulated" ? <Zap size={15} /> : <ShieldCheck size={15} />}{directProof.status === "simulated" ? "Broadcast proof" : "Simulate proof"}</button>}
               </div>
             )}
             {requestError && <div className="request-error" role="alert">{requestError}</div>}
@@ -471,10 +483,10 @@ function App() {
         </div>
         </>}
 
-        {activeView === "orders" && <OrdersView order={order} busy={busy} paymentPending={pendingPayment !== null} onSave={saveOrder} onToggle={togglePause} />}
-        {activeView === "providers" && <ProvidersView decisions={decisions} selectedId={selectedId} busy={busy} onRefresh={refreshProviders} onRequalify={requalifyProvider} />}
+        {activeView === "orders" && <OrdersView order={order} busy={busy} paymentPending={pendingPayment !== null} readOnly={sponsoredDemo} onSave={saveOrder} onToggle={togglePause} />}
+        {activeView === "providers" && <ProvidersView decisions={decisions} selectedId={selectedId} busy={busy} readOnly={sponsoredDemo} onRefresh={refreshProviders} onRequalify={requalifyProvider} />}
         {activeView === "executions" && <ExecutionsView cycles={cycles} providers={providers} directProof={directProof} />}
-        {activeView === "settings" && <SettingsView runtime={runtime} executionMode={executionMode} integrationReady={integrationReady} busy={busy} onSchedulerChange={setScheduler} onRefresh={refreshHealth} />}
+        {activeView === "settings" && <SettingsView runtime={runtime} executionMode={executionMode} integrationReady={integrationReady} busy={busy} sponsoredDemo={sponsoredDemo} onSchedulerChange={setScheduler} onRefresh={refreshHealth} />}
 
         <footer>
           <span><WalletCards size={15} /> Execution adapter: <strong>{executionMode}</strong></span>

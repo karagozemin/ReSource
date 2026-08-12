@@ -5,10 +5,11 @@ import type { DirectProof, ProcurementCycle, Provider, ProviderDecision, Runtime
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-export function OrdersView({ order, busy, paymentPending, onSave, onToggle }: {
+export function OrdersView({ order, busy, paymentPending, readOnly, onSave, onToggle }: {
   order: StandingOrder;
   busy: boolean;
   paymentPending: boolean;
+  readOnly: boolean;
   onSave: (update: StandingOrderUpdate) => Promise<boolean>;
   onToggle: () => Promise<void>;
 }) {
@@ -28,17 +29,17 @@ export function OrdersView({ order, busy, paymentPending, onSave, onToggle }: {
           <span className={`state-badge ${order.status === "paused" ? "paused" : "active"}`}><span />{order.status}</span>
         </div>
         <div className="form-grid">
-          <label className="field"><span>Interval</span><div className="input-with-unit"><input type="number" min="1" max="1440" step="1" value={draft.intervalMinutes} onChange={(event) => numberField("intervalMinutes", event.target.value)} /><small>minutes</small></div></label>
-          <label className="field"><span>Max price</span><div className="input-with-unit"><input type="number" min="0.01" max="100" step="0.01" value={draft.maxPrice} onChange={(event) => numberField("maxPrice", event.target.value)} /><small>USDC</small></div></label>
-          <label className="field"><span>Daily budget</span><div className="input-with-unit"><input type="number" min={draft.maxPrice} max="10000" step="0.01" value={draft.dailyBudget} onChange={(event) => numberField("dailyBudget", event.target.value)} /><small>USDC</small></div></label>
-          <label className="field"><span>Max latency</span><div className="input-with-unit"><input type="number" min="1000" max="300000" step="1000" value={draft.maxLatencyMs} onChange={(event) => numberField("maxLatencyMs", event.target.value)} /><small>ms</small></div></label>
-          <label className="field"><span>Minimum reliability</span><div className="input-with-unit"><input type="number" min="0" max="100" step="0.1" value={Number((draft.minReliability * 100).toFixed(2))} onChange={(event) => numberField("minReliability", String(Number(event.target.value) / 100))} /><small>%</small></div></label>
-          <label className="toggle-field"><span><strong>Automatic failover</strong><small>Re-procure after an SLA breach</small></span><input type="checkbox" checked={draft.automaticFailover} onChange={(event) => { setDraft((current) => ({ ...current, automaticFailover: event.target.checked })); setDirty(true); }} /></label>
+          <label className="field"><span>Interval</span><div className="input-with-unit"><input disabled={readOnly} type="number" min="1" max="1440" step="1" value={draft.intervalMinutes} onChange={(event) => numberField("intervalMinutes", event.target.value)} /><small>minutes</small></div></label>
+          <label className="field"><span>Max price</span><div className="input-with-unit"><input disabled={readOnly} type="number" min="0.01" max="100" step="0.01" value={draft.maxPrice} onChange={(event) => numberField("maxPrice", event.target.value)} /><small>USDC</small></div></label>
+          <label className="field"><span>Daily budget</span><div className="input-with-unit"><input disabled={readOnly} type="number" min={draft.maxPrice} max="10000" step="0.01" value={draft.dailyBudget} onChange={(event) => numberField("dailyBudget", event.target.value)} /><small>USDC</small></div></label>
+          <label className="field"><span>Max latency</span><div className="input-with-unit"><input disabled={readOnly} type="number" min="1000" max="300000" step="1000" value={draft.maxLatencyMs} onChange={(event) => numberField("maxLatencyMs", event.target.value)} /><small>ms</small></div></label>
+          <label className="field"><span>Minimum reliability</span><div className="input-with-unit"><input disabled={readOnly} type="number" min="0" max="100" step="0.1" value={Number((draft.minReliability * 100).toFixed(2))} onChange={(event) => numberField("minReliability", String(Number(event.target.value) / 100))} /><small>%</small></div></label>
+          <label className="toggle-field"><span><strong>Automatic failover</strong><small>Re-procure after an SLA breach</small></span><input disabled={readOnly} type="checkbox" checked={draft.automaticFailover} onChange={(event) => { setDraft((current) => ({ ...current, automaticFailover: event.target.checked })); setDirty(true); }} /></label>
         </div>
-        <div className="panel-actions">
+        {!readOnly && <div className="panel-actions">
           <button className="secondary-button" onClick={() => void onToggle()} disabled={busy}>{order.status === "active" ? <Pause size={15} /> : <Play size={15} />}{order.status === "active" ? "Pause order" : "Resume order"}</button>
           <button className="primary-button fit" onClick={() => void onSave(draft).then((saved) => { if (saved) setDirty(false); })} disabled={busy || !dirty || paymentPending}><Save size={15} />Save policy</button>
-        </div>
+        </div>}
         {paymentPending && <div className="inline-notice warning">Policy editing is locked while a payment authorization is pending.</div>}
       </section>
 
@@ -56,10 +57,11 @@ export function OrdersView({ order, busy, paymentPending, onSave, onToggle }: {
   );
 }
 
-export function ProvidersView({ decisions, selectedId, busy, onRefresh, onRequalify }: {
+export function ProvidersView({ decisions, selectedId, busy, readOnly, onRefresh, onRequalify }: {
   decisions: ProviderDecision[];
   selectedId: string | null;
   busy: boolean;
+  readOnly: boolean;
   onRefresh: () => Promise<void>;
   onRequalify: (id: string) => Promise<void>;
 }) {
@@ -67,7 +69,7 @@ export function ProvidersView({ decisions, selectedId, busy, onRefresh, onRequal
     <section className="workspace-panel full-panel">
       <div className="section-heading compact">
         <div><div className="eyebrow">Marketplace inventory</div><h2>{decisions.length} discovered providers</h2></div>
-        <button className="secondary-button" onClick={() => void onRefresh()} disabled={busy}><RefreshCw size={15} className={busy ? "spin-soft" : ""} />Refresh catalog</button>
+        {!readOnly && <button className="secondary-button" onClick={() => void onRefresh()} disabled={busy}><RefreshCw size={15} className={busy ? "spin-soft" : ""} />Refresh catalog</button>}
       </div>
       <div className="provider-directory">
         {decisions.map((decision, index) => {
@@ -80,7 +82,7 @@ export function ProvidersView({ decisions, selectedId, busy, onRefresh, onRequal
               <div className="provider-stat"><span>Latency</span><strong>{(provider.latencyMs / 1000).toFixed(1)}s</strong></div>
               <div className="provider-stat"><span>Runs</span><strong>{provider.attempts}</strong></div>
               <div className="provider-decision">{selectedId === provider.id ? <span className="decision selected"><CheckCircle2 size={13} />Selected</span> : decision.eligible ? <span className="decision eligible">#{index + 1} eligible</span> : <span className="decision rejected">{decision.reason}</span>}</div>
-              <div className="provider-control">{!decision.eligible && <button className="secondary-button" onClick={() => void onRequalify(provider.id)} disabled={busy}>Requalify</button>}</div>
+              <div className="provider-control">{!readOnly && !decision.eligible && <button className="secondary-button" onClick={() => void onRequalify(provider.id)} disabled={busy}>Requalify</button>}</div>
             </article>
           );
         })}
@@ -127,11 +129,12 @@ export function ExecutionsView({ cycles, providers, directProof }: { cycles: Pro
   );
 }
 
-export function SettingsView({ runtime, executionMode, integrationReady, busy, onSchedulerChange, onRefresh }: {
+export function SettingsView({ runtime, executionMode, integrationReady, busy, sponsoredDemo, onSchedulerChange, onRefresh }: {
   runtime: RuntimeInfo;
   executionMode: "demo" | "keeperhub";
   integrationReady: boolean;
   busy: boolean;
+  sponsoredDemo: boolean;
   onSchedulerChange: (enabled: boolean) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
@@ -139,7 +142,8 @@ export function SettingsView({ runtime, executionMode, integrationReady, busy, o
     <div className="workspace-grid settings-workspace">
       <section className="workspace-panel settings-panel">
         <div className="section-heading compact"><div><div className="eyebrow">Runtime</div><h2>Automation</h2></div></div>
-        <div className="setting-row"><span><strong>Scheduler</strong><small>{runtime.scheduler.pollMs ? `Poll every ${(runtime.scheduler.pollMs / 1000).toFixed(0)} seconds` : "Runtime control unavailable"}</small></span><input type="checkbox" checked={runtime.scheduler.enabled} disabled={busy || runtime.scheduler.pollMs === null} onChange={(event) => void onSchedulerChange(event.target.checked)} /></div>
+        <div className="setting-row"><span><strong>Scheduler</strong><small>{runtime.scheduler.pollMs ? `Poll every ${(runtime.scheduler.pollMs / 1000).toFixed(0)} seconds` : "Runtime control unavailable"}</small></span><input type="checkbox" checked={runtime.scheduler.enabled} disabled={busy || sponsoredDemo || runtime.scheduler.pollMs === null} onChange={(event) => void onSchedulerChange(event.target.checked)} /></div>
+        {sponsoredDemo && <div className="setting-row"><span><strong>Sponsored live demo</strong><small>Public purchases stop at the server-enforced spend cap</small></span><span className="locked-value">{runtime.sponsoredDemo.remaining?.toFixed(2) ?? "0.00"} USDC left</span></div>}
         <div className="setting-row"><span><strong>Automatic fail-closed policy</strong><small>Blocks empty, invalid or over-budget execution</small></span><span className="locked-value">Enforced</span></div>
       </section>
       <section className="workspace-panel settings-panel">

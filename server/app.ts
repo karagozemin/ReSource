@@ -7,6 +7,7 @@ import type { TriggerEngine } from "./scheduler";
 
 export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: TriggerEngine) {
   const app = Fastify({ logger: true });
+  const sponsoredDemo = readSponsoredDemoConfig(orchestrator.snapshot().executionMode);
 
   const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? "")
     .split(",")
@@ -19,12 +20,18 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
         else callback(null, false);
       },
       methods: ["GET", "POST", "PATCH", "OPTIONS"],
-      allowedHeaders: ["content-type", "idempotency-key", "x-resource-operator-key"],
+      allowedHeaders: ["content-type", "idempotency-key", "x-resource-operator-key", "x-resource-payment-confirmation"],
     });
   }
 
   app.addHook("preHandler", async (request, reply) => {
     if (!isMutation(request.method)) return;
+    const route = request.routeOptions.url ?? request.url;
+    if (sponsoredDemo.enabled && isSponsoredDemoRoute(request.method, route)) {
+      const limitError = sponsoredDemoLimitError(orchestrator.snapshot(), sponsoredDemo.spendCap, route);
+      if (limitError) return reply.code(403).send({ error: limitError });
+      return;
+    }
     const expected = process.env.OPERATOR_API_KEY;
     if (!expected) {
       if (process.env.NODE_ENV === "production") return reply.code(503).send({ error: "Operator authorization is not configured" });
@@ -36,7 +43,14 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
 
   app.get("/api/health", async () => ({ ok: true, mode: orchestrator.snapshot().executionMode }));
   app.get("/api/state", async () => orchestrator.snapshot());
-  app.get("/api/runtime", async () => ({ scheduler: scheduler?.status() ?? { enabled: false, pollMs: null } }));
+  app.get("/api/runtime", async () => ({
+    scheduler: scheduler?.status() ?? { enabled: false, pollMs: null },
+    sponsoredDemo: {
+      enabled: sponsoredDemo.enabled,
+      spendCap: sponsoredDemo.enabled ? sponsoredDemo.spendCap : null,
+      remaining: sponsoredDemo.enabled ? remainingSponsoredSpend(orchestrator.snapshot().metrics.spend, sponsoredDemo.spendCap) : null,
+    },
+  }));
   app.post<{ Params: { id: string }; Headers: { "idempotency-key"?: string } }>("/api/standing-orders/:id/run", async (request, reply) => {
     const state = orchestrator.snapshot();
     if (request.params.id !== state.order.id) return reply.code(404).send({ error: "Standing order not found" });
@@ -45,8 +59,11 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
     try { return await orchestrator.run(key); }
     catch (error) { return reply.code(503).send({ error: String(error) }); }
   });
-  app.post<{ Params: { cycleId: string } }>("/api/procurement/:cycleId/confirm-payment", async (request, reply) => {
-    try { return await orchestrator.confirmPayment(request.params.cycleId); }
+  app.post<{ Params: { cycleId: string }; Headers: { "x-resource-payment-confirmation"?: string } }>("/api/procurement/:cycleId/confirm-payment", async (request, reply) => {
+    if (request.headers["x-resource-payment-confirmation"] !== request.params.cycleId) {
+      return reply.code(400).send({ error: "Explicit payment confirmation is required" });
+    }
+    try { return await orchestrator.confirmPayment(request.params.cycleId, sponsoredDemo.enabled ? sponsoredDemo.spendCap : undefined); }
     catch (error) { return reply.code(409).send({ error: String(error) }); }
   });
   app.post("/api/direct-proof/simulate", async (_request, reply) => {
@@ -93,6 +110,36 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
 }
 
 function isMutation(method: string) { return method === "POST" || method === "PATCH" || method === "PUT" || method === "DELETE"; }
+
+function isSponsoredDemoRoute(method: string, route: string) {
+  return method === "POST" && [
+    "/api/standing-orders/:id/run",
+    "/api/procurement/:cycleId/confirm-payment",
+  ].includes(route);
+}
+
+function readSponsoredDemoConfig(executionMode: "demo" | "keeperhub") {
+  const parsedCap = Number(process.env.PUBLIC_DEMO_SPEND_CAP ?? "0.10");
+  return {
+    enabled: executionMode === "keeperhub" && process.env.PUBLIC_DEMO_ENABLED === "true",
+    spendCap: Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 0.10,
+  };
+}
+
+function sponsoredDemoLimitError(state: ReturnType<ProcurementOrchestrator["snapshot"]>, spendCap: number, route: string) {
+  const remaining = remainingSponsoredSpend(state.metrics.spend, spendCap);
+  if (route === "/api/procurement/:cycleId/confirm-payment") {
+    const amount = state.pendingPayment?.amount ?? 0;
+    return amount > remaining + Number.EPSILON ? "Sponsored live-demo budget has been exhausted" : null;
+  }
+  const availablePrices = state.providers.filter((provider) => provider.state !== "ineligible").map((provider) => provider.price);
+  const minimumPrice = availablePrices.length > 0 ? Math.min(...availablePrices) : state.order.maxPrice;
+  return minimumPrice > remaining + Number.EPSILON ? "Sponsored live-demo budget has been exhausted" : null;
+}
+
+function remainingSponsoredSpend(spend: number, spendCap: number) {
+  return Math.max(0, Number((spendCap - spend).toFixed(6)));
+}
 
 function secureEqual(provided: string, expected: string) {
   const left = Buffer.from(provided);

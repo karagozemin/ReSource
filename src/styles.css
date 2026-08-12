@@ -484,6 +484,7 @@ body { background: var(--paper); }
 .operation-toast > span:nth-child(2) { display: grid; gap: 4px; }.operation-toast strong { font-size: 10px; }.operation-toast small { color: #7b817a; font-size: 8px; }.toast-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--coral); animation: toastProgress 8s linear infinite; }
 .operator-button { height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 2px; display: inline-flex; align-items: center; gap: 7px; color: #747a73; background: #fafaf7; font-size: 9px; font-weight: 700; cursor: pointer; }
 .operator-button.unlocked { color: var(--green); border-color: #bed9ca; background: var(--green-soft); }
+.sponsored-status { cursor: default; }
 .operator-backdrop { position: fixed; inset: 0; z-index: 90; padding: 20px; display: grid; place-items: center; background: rgba(10,12,10,.65); backdrop-filter: blur(7px); }
 .operator-dialog { width: min(430px, 100%); padding: 24px; border: 1px solid #d9dbd4; display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 17px; color: var(--ink); background: #fafaf7; box-shadow: 0 28px 80px rgba(0,0,0,.3); }
 .operator-dialog-icon { width: 42px; height: 42px; display: grid; place-items: center; color: white; background: #181a16; }

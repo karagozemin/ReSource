@@ -23,6 +23,10 @@ services:
         sync: false
       - key: OPERATOR_API_KEY
         sync: false
+      - key: PUBLIC_DEMO_ENABLED
+        value: "true"
+      - key: PUBLIC_DEMO_SPEND_CAP
+        value: "0.10"
       - key: KEEPERHUB_API_URL
         value: https://app.keeperhub.com/api
       - key: KEEPERHUB_API_KEY

@@ -23,6 +23,11 @@ export type RuntimeInfo = {
     enabled: boolean;
     pollMs: number | null;
   };
+  sponsoredDemo: {
+    enabled: boolean;
+    spendCap: number | null;
+    remaining: number | null;
+  };
 };
 
 export type Provider = {

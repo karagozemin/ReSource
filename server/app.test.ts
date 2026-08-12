@@ -106,4 +106,34 @@ describe("procurement API", () => {
       else process.env.OPERATOR_API_KEY = previous;
     }
   });
+
+  it("allows only the sponsored procurement flow without an operator key", async () => {
+    const previousKey = process.env.OPERATOR_API_KEY;
+    const previousDemo = process.env.PUBLIC_DEMO_ENABLED;
+    process.env.OPERATOR_API_KEY = "test-operator-key";
+    process.env.PUBLIC_DEMO_ENABLED = "true";
+    await app.close();
+    const keeperHubAdapter = {
+      mode: "keeperhub" as const,
+      isReady: () => true,
+      execute: async () => ({ executionId: "test", success: true, latencyMs: 1, output: { riskLevel: "low", riskScore: 1, factors: [] }, transactionHash: null, error: null }),
+    };
+    const orchestrator = new ProcurementOrchestrator(new MemoryStateStore(), keeperHubAdapter);
+    await orchestrator.initialize();
+    app = buildApp(orchestrator);
+
+    try {
+      const publicRun = await app.inject({ method: "POST", url: "/api/standing-orders/SO-001/run", headers: { "idempotency-key": "sponsored-cycle" } });
+      const protectedToggle = await app.inject({ method: "POST", url: "/api/standing-orders/toggle" });
+      const runtime = await app.inject({ method: "GET", url: "/api/runtime" });
+      expect(publicRun.statusCode).toBe(200);
+      expect(protectedToggle.statusCode).toBe(401);
+      expect(runtime.json()).toMatchObject({ sponsoredDemo: { enabled: true, spendCap: 0.1, remaining: 0.1 } });
+    } finally {
+      if (previousKey === undefined) delete process.env.OPERATOR_API_KEY;
+      else process.env.OPERATOR_API_KEY = previousKey;
+      if (previousDemo === undefined) delete process.env.PUBLIC_DEMO_ENABLED;
+      else process.env.PUBLIC_DEMO_ENABLED = previousDemo;
+    }
+  });
 });

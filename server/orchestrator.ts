@@ -36,8 +36,8 @@ export class ProcurementOrchestrator {
     return this.serial(() => this.runInternal(idempotencyKey));
   }
 
-  confirmPayment(cycleId: string) {
-    return this.serial(() => this.confirmPaymentInternal(cycleId));
+  confirmPayment(cycleId: string, spendCap?: number) {
+    return this.serial(() => this.confirmPaymentInternal(cycleId, spendCap));
   }
 
   simulateDirectProof() {
@@ -243,7 +243,7 @@ export class ProcurementOrchestrator {
     return { state: this.snapshot(), cycle, replayed: false };
   }
 
-  private async confirmPaymentInternal(cycleId: string) {
+  private async confirmPaymentInternal(cycleId: string, spendCap?: number) {
     const payment = this.state.pendingPayment;
     if (!payment || payment.cycleId !== cycleId) throw new Error("No matching payment authorization is pending");
     if (!this.marketplace?.isReady()) throw new Error("Marketplace buyer is not configured");
@@ -252,9 +252,10 @@ export class ProcurementOrchestrator {
     const provider = this.state.providers.find((item) => item.id === payment.providerId);
     if (!provider) throw new Error("Selected provider no longer exists");
     if (this.state.order.status !== "active") throw new Error("Standing order is paused; payment authorization is blocked");
-    if (payment.amount > this.state.order.maxPrice || this.state.metrics.spend + payment.amount > this.state.order.dailyBudget) {
+    const sponsoredBudgetExceeded = spendCap !== undefined && this.state.metrics.spend + payment.amount > spendCap + Number.EPSILON;
+    if (payment.amount > this.state.order.maxPrice || this.state.metrics.spend + payment.amount > this.state.order.dailyBudget || sponsoredBudgetExceeded) {
       cycle.status = "policy_blocked";
-      cycle.error = "Payment no longer satisfies budget policy";
+      cycle.error = sponsoredBudgetExceeded ? "Sponsored live-demo budget has been exhausted" : "Payment no longer satisfies budget policy";
       cycle.completedAt = new Date().toISOString();
       this.state.pendingPayment = null;
       this.state.mode = "ready";

@@ -143,6 +143,22 @@ describe("ProcurementOrchestrator", () => {
     expect(result.state.pendingPayment).toBeNull();
   });
 
+  it("enforces the sponsored spend cap inside the serialized payment gate", async () => {
+    const marketplace = marketplaceStub();
+    let payCalls = 0;
+    marketplace.pay = async () => {
+      payCalls += 1;
+      return { executionId: "keeperhub-paid", success: true, latencyMs: 500, output: { riskLevel: "low", riskScore: 12, factors: [] }, transactionHash: "0xpayment", error: null, paid: true, amount: 0.03, paymentProtocol: "x402" };
+    };
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplace);
+    await buyer.initialize();
+    const quote = await buyer.run("capped-cycle");
+    const result = await buyer.confirmPayment(quote.cycle.id, 0.02);
+    expect(result.cycle).toMatchObject({ status: "policy_blocked", error: "Sponsored live-demo budget has been exhausted" });
+    expect(result.state.metrics.spend).toBe(0);
+    expect(payCalls).toBe(0);
+  });
+
   it("refreshes an expired quote and requires a second authorization", async () => {
     let quoteNumber = 0;
     let payNumber = 0;
