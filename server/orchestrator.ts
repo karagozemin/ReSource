@@ -32,8 +32,8 @@ export class ProcurementOrchestrator {
 
   snapshot(): AppState { return structuredClone(this.state); }
 
-  run(idempotencyKey: string) {
-    return this.serial(() => this.runInternal(idempotencyKey));
+  run(idempotencyKey: string, pendingPaymentMaxAgeMs?: number) {
+    return this.serial(() => this.runInternal(idempotencyKey, pendingPaymentMaxAgeMs));
   }
 
   confirmPayment(cycleId: string, spendCap?: number) {
@@ -156,9 +156,21 @@ export class ProcurementOrchestrator {
     return next;
   }
 
-  private async runInternal(idempotencyKey: string) {
+  private async runInternal(idempotencyKey: string, pendingPaymentMaxAgeMs?: number) {
     const existing = this.state.cycles.find((cycle) => cycle.idempotencyKey === idempotencyKey);
     if (existing) return { state: this.snapshot(), cycle: existing, replayed: true };
+    if (this.state.pendingPayment && pendingPaymentMaxAgeMs !== undefined && isOlderThan(this.state.pendingPayment.createdAt, pendingPaymentMaxAgeMs)) {
+      const staleCycle = this.state.cycles.find((cycle) => cycle.id === this.state.pendingPayment?.cycleId);
+      if (staleCycle) {
+        staleCycle.status = "failed";
+        staleCycle.error = "Payment confirmation window expired";
+        staleCycle.completedAt = new Date().toISOString();
+      }
+      this.state.pendingPayment = null;
+      this.state.mode = "ready";
+      this.addEvent("warning", "Payment confirmation expired", "The abandoned quote was closed without payment.");
+      await this.store.save(this.state);
+    }
     if (this.state.pendingPayment) throw new Error("A payment authorization is already pending");
     if (!(this.marketplace?.isReady() ?? this.adapter.isReady())) throw new Error("Execution adapter is not configured");
     if (this.state.order.status !== "active") return this.policyBlocked(idempotencyKey, "Standing order is paused");
@@ -454,4 +466,9 @@ function validateOrderUpdate(update: StandingOrderUpdate) {
   if (!Number.isInteger(update.maxLatencyMs) || update.maxLatencyMs < 1000 || update.maxLatencyMs > 300_000) throw new Error("Max latency must be an integer from 1,000 to 300,000 ms");
   if (!Number.isFinite(update.minReliability) || update.minReliability < 0 || update.minReliability > 1) throw new Error("Minimum reliability must be between 0 and 1");
   if (typeof update.automaticFailover !== "boolean") throw new Error("Automatic failover must be boolean");
+}
+
+function isOlderThan(timestamp: string, maxAgeMs: number) {
+  const createdAt = Date.parse(timestamp);
+  return !Number.isFinite(createdAt) || Date.now() - createdAt > maxAgeMs;
 }

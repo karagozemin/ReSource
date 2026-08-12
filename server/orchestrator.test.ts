@@ -132,6 +132,26 @@ describe("ProcurementOrchestrator", () => {
     await expect(buyer.run("second-cycle")).rejects.toThrow("already pending");
   });
 
+  it("closes an abandoned sponsored quote before starting another cycle", async () => {
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplaceStub());
+    await buyer.initialize();
+    const first = await buyer.run("abandoned-quote");
+    const pending = buyer.snapshot().pendingPayment!;
+    pending.createdAt = new Date(Date.now() - 10_000).toISOString();
+    const state = buyer.snapshot();
+    state.pendingPayment = pending;
+    const store = new MemoryStateStore();
+    await store.save(state);
+    const restored = new ProcurementOrchestrator(store, new DemoExecutionAdapter(), marketplaceStub());
+    await restored.initialize();
+
+    const second = await restored.run("replacement-quote", 5_000);
+    expect(second.cycle.status).toBe("awaiting_payment");
+    expect(second.cycle.id).not.toBe(first.cycle.id);
+    expect(second.state.cycles.find((cycle) => cycle.id === first.cycle.id)).toMatchObject({ status: "failed", error: "Payment confirmation window expired" });
+    expect(second.state.metrics.spend).toBe(0);
+  });
+
   it("records x402 spend only after payment and result verification", async () => {
     const buyer = new ProcurementOrchestrator(new MemoryStateStore(), new DemoExecutionAdapter(), marketplaceStub());
     await buyer.initialize();

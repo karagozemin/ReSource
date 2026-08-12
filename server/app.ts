@@ -56,7 +56,7 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
     if (request.params.id !== state.order.id) return reply.code(404).send({ error: "Standing order not found" });
     const key = request.headers["idempotency-key"];
     if (!key) return reply.code(400).send({ error: "idempotency-key header is required" });
-    try { return await orchestrator.run(key); }
+    try { return await orchestrator.run(key, sponsoredDemo.enabled ? sponsoredDemo.pendingPaymentMaxAgeMs : undefined); }
     catch (error) { return reply.code(503).send({ error: String(error) }); }
   });
   app.post<{ Params: { cycleId: string }; Headers: { "x-resource-payment-confirmation"?: string } }>("/api/procurement/:cycleId/confirm-payment", async (request, reply) => {
@@ -123,6 +123,7 @@ function readSponsoredDemoConfig(executionMode: "demo" | "keeperhub") {
   return {
     enabled: executionMode === "keeperhub" && process.env.PUBLIC_DEMO_ENABLED === "true",
     spendCap: Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 0.10,
+    pendingPaymentMaxAgeMs: 5 * 60 * 1000,
   };
 }
 
