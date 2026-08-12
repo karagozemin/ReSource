@@ -21,6 +21,16 @@ export class TriggerEngine {
     this.timer = null;
   }
 
+  status() {
+    return { enabled: this.timer !== null, pollMs: this.pollMs };
+  }
+
+  setEnabled(enabled: boolean) {
+    if (enabled) this.start();
+    else this.stop();
+    return this.status();
+  }
+
   async tick() {
     const state = this.orchestrator.snapshot();
     if (state.order.status !== "active" || !state.integrationReady || state.pendingPayment) return null;

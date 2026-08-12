@@ -1,11 +1,14 @@
 import Fastify from "fastify";
+import type { StandingOrderUpdate } from "../src/types";
 import type { ProcurementOrchestrator } from "./orchestrator";
+import type { TriggerEngine } from "./scheduler";
 
-export function buildApp(orchestrator: ProcurementOrchestrator) {
+export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: TriggerEngine) {
   const app = Fastify({ logger: true });
 
   app.get("/api/health", async () => ({ ok: true, mode: orchestrator.snapshot().executionMode }));
   app.get("/api/state", async () => orchestrator.snapshot());
+  app.get("/api/runtime", async () => ({ scheduler: scheduler?.status() ?? { enabled: false, pollMs: null } }));
   app.post<{ Params: { id: string }; Headers: { "idempotency-key"?: string } }>("/api/standing-orders/:id/run", async (request, reply) => {
     const state = orchestrator.snapshot();
     if (request.params.id !== state.order.id) return reply.code(404).send({ error: "Standing order not found" });
@@ -36,6 +39,23 @@ export function buildApp(orchestrator: ProcurementOrchestrator) {
     catch (error) { return reply.code(409).send({ error: String(error) }); }
   });
   app.post("/api/standing-orders/toggle", async () => orchestrator.togglePause());
+  app.patch<{ Body: StandingOrderUpdate }>("/api/standing-orders/policy", async (request, reply) => {
+    try { return await orchestrator.updateOrder(request.body); }
+    catch (error) { return reply.code(409).send({ error: String(error) }); }
+  });
+  app.post("/api/providers/refresh", async (_request, reply) => {
+    try { return await orchestrator.refreshProviders(); }
+    catch (error) { return reply.code(503).send({ error: String(error) }); }
+  });
+  app.post<{ Params: { providerId: string } }>("/api/providers/:providerId/requalify", async (request, reply) => {
+    try { return await orchestrator.requalifyProvider(request.params.providerId); }
+    catch (error) { return reply.code(404).send({ error: String(error) }); }
+  });
+  app.patch<{ Body: { enabled?: unknown } }>("/api/runtime/scheduler", async (request, reply) => {
+    if (!scheduler) return reply.code(503).send({ error: "Scheduler control is unavailable" });
+    if (typeof request.body?.enabled !== "boolean") return reply.code(400).send({ error: "enabled must be boolean" });
+    return { scheduler: scheduler.setEnabled(request.body.enabled) };
+  });
   app.post("/api/demo/reset", async (_request, reply) => {
     if (orchestrator.snapshot().executionMode !== "demo") return reply.code(404).send({ error: "Demo reset is unavailable" });
     return orchestrator.reset();

@@ -14,6 +14,17 @@ export type StandingOrder = {
   status: StandingOrderStatus;
 };
 
+export type StandingOrderUpdate = Pick<StandingOrder,
+  "intervalMinutes" | "maxPrice" | "dailyBudget" | "maxLatencyMs" | "minReliability" | "automaticFailover"
+>;
+
+export type RuntimeInfo = {
+  scheduler: {
+    enabled: boolean;
+    pollMs: number | null;
+  };
+};
+
 export type Provider = {
   id: string;
   name: string;

@@ -11,6 +11,10 @@ ReSource gives an autonomous agent a persistent service requirement, called a St
 This repository currently ships a working product slice:
 
 - an operational dashboard that explains the product in one screen;
+- functional Orders, Providers, Executions and Settings workspaces;
+- server-validated policy editing, provider catalog refresh and operator requalification;
+- execution filters, settlement links and direct-proof visibility;
+- runtime scheduler controls that remain disabled by default;
 - a deterministic policy and provider scoring engine;
 - three competing transaction-risk providers;
 - price, daily budget, latency, reliability and paused-order guards;
@@ -124,20 +128,20 @@ The current code separates procurement rules and execution from React:
 | x402 payment | Complete | Quote and explicit authorization are separate; receipts persist amount and transaction hash |
 | Result verification | Complete | Risk schema and latency are verified before an execution counts as successful |
 | Automatic re-procurement | Complete | Controlled Sentinel SLA breach suspends it and prepares an Atlas quote without spending |
-| Direct KeeperHub execution | Ready for broadcast | Base Sepolia self-transfer passed KeeperHub simulation at 21,000 gas |
+| Direct KeeperHub execution | Complete | [Base Sepolia transaction](https://sepolia.basescan.org/tx/0x3c0124ac14d8e18bb5bdcb65ad0196da463522fa562f3c7e5f5d55710ae3c302) confirmed after KeeperHub simulation |
 | Audit and metrics | Complete | Cycles, evaluations, purchases, executions, recoveries, spend and savings |
 
-The dashboard currently holds an Atlas quote for `0.05 USDC` after a verified no-spend failover. The direct proof is simulated. Both state-changing actions remain behind their own explicit buttons.
+The persisted demo evidence includes two verified Atlas x402 purchases, a controlled Sentinel SLA failure, one automatic recovery and a confirmed Base Sepolia direct proof. New purchases and direct broadcasts remain behind separate explicit controls.
 
 ## Demo runbook
 
 1. Open the dashboard and show the live Marketplace provider metadata.
-2. Run procurement to create a policy-approved quote. No payment occurs at this stage.
-3. Use the warning icon beside authorization to simulate a provider SLA breach. ReSource suspends the provider and quotes the next eligible listing.
-4. Authorize one x402 purchase and show its settlement hash plus verified workflow output in the audit timeline.
-5. Show the already-passed Base Sepolia simulation, then broadcast the direct proof and open the returned explorer link.
+2. Open **Providers** and show the live listing metadata and observed performance.
+3. Open **Executions** and show the two x402 settlements, controlled failure and direct proof link.
+4. Use **Orders** to show the persisted budget, SLA and failover policy.
+5. Return to **Overview** and explain the completed recovery timeline. Run another paid cycle only when fresh evidence is required.
 
-Steps 4 and 5 move funds or broadcast onchain and must each be explicitly approved.
+The runbook above is read-only. Starting another paid cycle or broadcasting a new direct proof remains a separate, explicit action in the dashboard.
 
 ## API
 
@@ -145,8 +149,13 @@ Steps 4 and 5 move funds or broadcast onchain and must each be explicitly approv
 | --- | --- | --- |
 | `GET` | `/api/health` | Adapter health |
 | `GET` | `/api/state` | Dashboard state, cycles and metrics |
+| `GET` | `/api/runtime` | Runtime scheduler state |
 | `POST` | `/api/standing-orders/SO-001/run` | Execute a cycle; requires `idempotency-key` |
 | `POST` | `/api/standing-orders/toggle` | Pause or resume the order |
+| `PATCH` | `/api/standing-orders/policy` | Update the validated procurement policy |
+| `POST` | `/api/providers/refresh` | Refresh Marketplace provider discovery |
+| `POST` | `/api/providers/:id/requalify` | Clear observed provider history and requalify |
+| `PATCH` | `/api/runtime/scheduler` | Enable or disable the in-process scheduler |
 | `POST` | `/api/demo/failure` | Inject provider failure in demo mode |
 | `POST` | `/api/demo/reset` | Reset persisted demo state |
 
@@ -185,15 +194,15 @@ Environment variable placeholders are documented in `.env.example`. Secrets must
 - The recurring trigger runs in-process; production deployment should move it to a durable worker or scheduler.
 - The current wallet integration shells out to the installed `onchainos` CLI; production deployment should replace this with a long-running wallet service boundary.
 - Marketplace catalog search is paginated and currently scans recent listings before validating configured slugs.
-- Direct KeeperHub proof has passed simulation but still requires one explicitly approved Base Sepolia broadcast.
+- Scheduler toggles are runtime-only; restart behavior is still controlled by `SCHEDULER_ENABLED`.
 
 ## Next build order
 
-1. Broadcast the simulated Base Sepolia proof and record its public link.
-2. Run the dashboard-controlled paid cycle and capture the x402 receipt in the audit timeline.
-3. Exercise automatic failover from Sentinel to Atlas with a controlled provider failure.
-4. Replace JSON persistence with SQLite before multi-process deployment.
-5. Record the demo video and publish only observed metrics.
+1. Record the demo video using the persisted paid, failure, recovery and direct-proof evidence.
+2. Publish the repository and add its public URL to the submission.
+3. Replace JSON persistence with SQLite before multi-process deployment.
+4. Prepare the separate onboarding bounty artifact from the captured KeeperHub integration friction.
+5. Submit the BUIDL and public transaction link to DoraHacks.
 
 ## Name
 

@@ -19,6 +19,6 @@ await orchestrator.initialize();
 const scheduler = new TriggerEngine(orchestrator, Number(process.env.SCHEDULER_POLL_MS || 30_000));
 if (process.env.SCHEDULER_ENABLED === "true") scheduler.start();
 
-const app = buildApp(orchestrator);
+const app = buildApp(orchestrator, scheduler);
 app.addHook("onClose", async () => scheduler.stop());
 await app.listen({ host: "127.0.0.1", port: Number(process.env.PORT || 8787) });

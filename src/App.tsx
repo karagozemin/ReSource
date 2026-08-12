@@ -27,8 +27,19 @@ import {
 } from "lucide-react";
 import { initialEvents, initialMetrics, initialProviders, standingOrder as initialOrder } from "./data/demo";
 import { rankProviders } from "./lib/procurement";
-import type { AppState, DirectProof, PendingPayment } from "./types";
+import type { AppState, DirectProof, PendingPayment, RuntimeInfo, StandingOrderUpdate } from "./types";
 import type { ProcurementCycle } from "./types";
+import { ExecutionsView, OrdersView, ProvidersView, SettingsView } from "./WorkspaceViews";
+
+type ViewId = "overview" | "orders" | "providers" | "executions" | "settings";
+
+const viewTitles: Record<ViewId, { eyebrow: string; title: string }> = {
+  overview: { eyebrow: "Autonomous procurement", title: "Operations overview" },
+  orders: { eyebrow: "Standing order management", title: "Orders" },
+  providers: { eyebrow: "Service marketplace", title: "Providers" },
+  executions: { eyebrow: "Procurement audit", title: "Executions" },
+  settings: { eyebrow: "Buyer runtime", title: "Settings" },
+};
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -42,6 +53,7 @@ const eventTime = (value: string) => {
 };
 
 function App() {
+  const [activeView, setActiveView] = useState<ViewId>(readInitialView);
   const [providers, setProviders] = useState(initialProviders);
   const [events, setEvents] = useState(initialEvents);
   const [metrics, setMetrics] = useState(initialMetrics);
@@ -55,9 +67,12 @@ function App() {
   const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
   const [directProof, setDirectProof] = useState<DirectProof>({ status: "ready", chainId: "84532", network: "Base Sepolia", from: null, to: null, gasEstimate: null, executionId: null, transactionHash: null, transactionLink: null, error: null });
   const [cycles, setCycles] = useState<ProcurementCycle[]>([]);
+  const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null } });
 
   useEffect(() => {
-    void apiRequest<AppState>("/api/state").then(applyState).catch((error) => setRequestError(error.message));
+    void Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")])
+      .then(([state, runtimeInfo]) => { applyState(state); setRuntime(runtimeInfo); })
+      .catch((error) => setRequestError(error.message));
   }, []);
 
   const decisions = useMemo(
@@ -151,6 +166,55 @@ function App() {
     finally { setPending(false); }
   }
 
+  async function saveOrder(update: StandingOrderUpdate) {
+    if (busy) return false;
+    setPending(true);
+    try {
+      applyState(await apiRequest<AppState>("/api/standing-orders/policy", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(update) }));
+      return true;
+    }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); return false; }
+    finally { setPending(false); }
+  }
+
+  async function refreshProviders() {
+    if (busy) return;
+    setPending(true);
+    try { applyState(await apiRequest<AppState>("/api/providers/refresh", { method: "POST" })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
+  }
+
+  async function requalifyProvider(providerId: string) {
+    if (busy) return;
+    setPending(true);
+    try { applyState(await apiRequest<AppState>(`/api/providers/${providerId}/requalify`, { method: "POST" })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
+  }
+
+  async function setScheduler(enabled: boolean) {
+    setPending(true);
+    try { setRuntime(await apiRequest<RuntimeInfo>("/api/runtime/scheduler", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) })); }
+    catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
+  }
+
+  async function refreshHealth() {
+    setPending(true);
+    try {
+      const [state, runtimeInfo] = await Promise.all([apiRequest<AppState>("/api/state"), apiRequest<RuntimeInfo>("/api/runtime")]);
+      applyState(state);
+      setRuntime(runtimeInfo);
+    } catch (error) { setRequestError(error instanceof Error ? error.message : String(error)); }
+    finally { setPending(false); }
+  }
+
+  function navigate(view: ViewId) {
+    setActiveView(view);
+    window.history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -159,11 +223,11 @@ function App() {
           <span>ReSource</span>
         </div>
         <nav className="nav-list" aria-label="Primary navigation">
-          <button className="nav-item active" title="Overview"><LayoutDashboard size={18} /><span>Overview</span></button>
-          <button className="nav-item" title="Standing orders"><History size={18} /><span>Orders</span><span className="nav-count">1</span></button>
-          <button className="nav-item" title="Providers"><Bot size={18} /><span>Providers</span><span className="nav-count">{providers.length}</span></button>
-          <button className="nav-item" title="Executions"><Zap size={18} /><span>Executions</span></button>
-          <button className="nav-item" title="Settings"><Settings2 size={18} /><span>Settings</span></button>
+          <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} onClick={() => navigate("overview")} title="Overview"><LayoutDashboard size={18} /><span>Overview</span></button>
+          <button className={`nav-item ${activeView === "orders" ? "active" : ""}`} onClick={() => navigate("orders")} title="Standing orders"><History size={18} /><span>Orders</span><span className="nav-count">1</span></button>
+          <button className={`nav-item ${activeView === "providers" ? "active" : ""}`} onClick={() => navigate("providers")} title="Providers"><Bot size={18} /><span>Providers</span><span className="nav-count">{providers.length}</span></button>
+          <button className={`nav-item ${activeView === "executions" ? "active" : ""}`} onClick={() => navigate("executions")} title="Executions"><Zap size={18} /><span>Executions</span><span className="nav-count">{cycles.length}</span></button>
+          <button className={`nav-item ${activeView === "settings" ? "active" : ""}`} onClick={() => navigate("settings")} title="Settings"><Settings2 size={18} /><span>Settings</span></button>
         </nav>
         <div className="sidebar-foot">
           <div className="network-line"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo adapter" : "KeeperHub adapter"}</div>
@@ -174,8 +238,8 @@ function App() {
       <main>
         <header className="topbar">
           <div>
-            <div className="eyebrow">Autonomous procurement</div>
-            <h1>Operations overview</h1>
+            <div className="eyebrow">{viewTitles[activeView].eyebrow}</div>
+            <h1>{viewTitles[activeView].title}</h1>
           </div>
           <div className="top-actions">
             {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
@@ -183,6 +247,9 @@ function App() {
           </div>
         </header>
 
+        {requestError && activeView !== "overview" && <div className="page-error request-error" role="alert">{requestError}<button onClick={() => setRequestError(null)} aria-label="Dismiss error"><X size={14} /></button></div>}
+
+        {activeView === "overview" && <>
         <section className="health-band" aria-label="System status">
           <div className="health-copy">
             <div className={`pulse-icon ${mode}`}><HeartPulse size={22} /></div>
@@ -204,7 +271,9 @@ function App() {
           <Metric icon={<RefreshCw />} label="Cycles" value={metrics.cycles.toString()} note="procurement runs" />
           <Metric icon={<Bot />} label="Evaluations" value={metrics.evaluations.toString()} note="provider decisions" />
           <Metric icon={<CheckCircle2 />} label="Purchases" value={metrics.purchases.toString()} note="verified results" />
+          <Metric icon={<TriangleAlert />} label="Failures" value={cycles.filter((cycle) => ["failed", "policy_blocked", "no_provider"].includes(cycle.status)).length.toString()} note="failed closed" />
           <Metric icon={<HeartPulse />} label="Recoveries" value={metrics.recoveries.toString()} note="automatic failovers" accent />
+          <Metric icon={<Zap />} label="Executions" value={metrics.executions.toString()} note="verified workflows" />
           <Metric icon={<CircleDollarSign />} label="Spend" value={money.format(metrics.spend)} note={`${money.format(metrics.savings)} saved vs highest`} />
         </section>
 
@@ -317,10 +386,16 @@ function App() {
             </div>
           </section>
         </div>
+        </>}
+
+        {activeView === "orders" && <OrdersView order={order} busy={busy} paymentPending={pendingPayment !== null} onSave={saveOrder} onToggle={togglePause} />}
+        {activeView === "providers" && <ProvidersView decisions={decisions} selectedId={selectedId} busy={busy} onRefresh={refreshProviders} onRequalify={requalifyProvider} />}
+        {activeView === "executions" && <ExecutionsView cycles={cycles} providers={providers} directProof={directProof} />}
+        {activeView === "settings" && <SettingsView runtime={runtime} executionMode={executionMode} integrationReady={integrationReady} busy={busy} onSchedulerChange={setScheduler} onRefresh={refreshHealth} />}
 
         <footer>
           <span><WalletCards size={15} /> Execution adapter: <strong>{executionMode}</strong></span>
-          <button className="text-button">Integration notes <ExternalLink size={14} /></button>
+          <button className="text-button" onClick={() => navigate("settings")}>Integration settings <ExternalLink size={14} /></button>
         </footer>
       </main>
     </div>
@@ -340,6 +415,11 @@ function Step({ number, label, done }: { number: string; label: string; done: bo
 }
 
 function shortAddress(value: string) { return `${value.slice(0, 8)}...${value.slice(-6)}`; }
+
+function readInitialView(): ViewId {
+  const candidate = window.location.hash.slice(1);
+  return Object.hasOwn(viewTitles, candidate) ? candidate as ViewId : "overview";
+}
 
 export default App;
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { applyProviderFailure, rankProviders } from "../src/lib/procurement";
-import type { AppState, ProcurementCycle, TimelineEvent } from "../src/types";
+import type { AppState, ProcurementCycle, StandingOrderUpdate, TimelineEvent } from "../src/types";
 import type { ExecutionAdapter } from "./adapters";
 import type { KeeperHubDirectExecutionClient } from "./direct-execution";
 import { createInitialState } from "./fixtures";
@@ -96,6 +96,46 @@ export class ProcurementOrchestrator {
     return this.serial(async () => {
       this.state.order.status = this.state.order.status === "active" ? "paused" : "active";
       this.addEvent(this.state.order.status === "active" ? "success" : "warning", `Standing order ${this.state.order.status}`, this.state.order.status === "active" ? "Future cycles are enabled." : "New payments are blocked until resumed.");
+      await this.store.save(this.state);
+      return this.snapshot();
+    });
+  }
+
+  updateOrder(update: StandingOrderUpdate) {
+    return this.serial(async () => {
+      if (this.state.pendingPayment) throw new Error("Order policy cannot change while payment authorization is pending");
+      validateOrderUpdate(update);
+      this.state.order = { ...this.state.order, ...update };
+      this.addEvent("success", "Standing order policy updated", `Budget $${update.dailyBudget.toFixed(2)} daily · $${update.maxPrice.toFixed(2)} max per call · ${update.maxLatencyMs} ms SLA.`);
+      await this.store.save(this.state);
+      return this.snapshot();
+    });
+  }
+
+  refreshProviders() {
+    return this.serial(async () => {
+      if (!this.marketplace?.isReady()) {
+        this.addEvent("info", "Provider catalog refreshed", `${this.state.providers.length} demo providers are available.`);
+        await this.store.save(this.state);
+        return this.snapshot();
+      }
+      const discovered = await this.marketplace.discover(this.state.providers);
+      this.state.providers = mergeProviderHistory(discovered, this.state.providers);
+      this.addEvent("success", "Marketplace catalog refreshed", `${this.state.providers.length} listed providers discovered.`);
+      await this.store.save(this.state);
+      return this.snapshot();
+    });
+  }
+
+  requalifyProvider(providerId: string) {
+    return this.serial(async () => {
+      const provider = this.state.providers.find((item) => item.id === providerId);
+      if (!provider) throw new Error("Provider not found");
+      provider.state = "healthy";
+      provider.reliability = 1;
+      provider.latencyMs = Math.min(provider.latencyMs, this.state.order.maxLatencyMs);
+      provider.attempts = 0;
+      this.addEvent("warning", `${provider.name} requalified`, "Operator cleared observed performance history; the provider will be evaluated on its next run.");
       await this.store.save(this.state);
       return this.snapshot();
     });
@@ -404,4 +444,13 @@ function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState
       : event);
   }
   return migrated;
+}
+
+function validateOrderUpdate(update: StandingOrderUpdate) {
+  if (!Number.isInteger(update.intervalMinutes) || update.intervalMinutes < 1 || update.intervalMinutes > 1440) throw new Error("Interval must be an integer from 1 to 1440 minutes");
+  if (!Number.isFinite(update.maxPrice) || update.maxPrice <= 0 || update.maxPrice > 100) throw new Error("Max price must be greater than 0 and at most 100 USDC");
+  if (!Number.isFinite(update.dailyBudget) || update.dailyBudget < update.maxPrice || update.dailyBudget > 10_000) throw new Error("Daily budget must cover max price and be at most 10,000 USDC");
+  if (!Number.isInteger(update.maxLatencyMs) || update.maxLatencyMs < 1000 || update.maxLatencyMs > 300_000) throw new Error("Max latency must be an integer from 1,000 to 300,000 ms");
+  if (!Number.isFinite(update.minReliability) || update.minReliability < 0 || update.minReliability > 1) throw new Error("Minimum reliability must be between 0 and 1");
+  if (typeof update.automaticFailover !== "boolean") throw new Error("Automatic failover must be boolean");
 }
