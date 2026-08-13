@@ -28,8 +28,6 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
     if (!isMutation(request.method)) return;
     const route = request.routeOptions.url ?? request.url;
     if (sponsoredDemo.enabled && isSponsoredDemoRoute(request.method, route)) {
-      const limitError = sponsoredDemoLimitError(orchestrator.snapshot(), sponsoredDemo.spendCap, route);
-      if (limitError) return reply.code(403).send({ error: limitError });
       return;
     }
     const expected = process.env.OPERATOR_API_KEY;
@@ -47,8 +45,6 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
     scheduler: scheduler?.status() ?? { enabled: false, pollMs: null },
     sponsoredDemo: {
       enabled: sponsoredDemo.enabled,
-      spendCap: sponsoredDemo.enabled ? sponsoredDemo.spendCap : null,
-      remaining: sponsoredDemo.enabled ? remainingSponsoredSpend(orchestrator.snapshot().metrics.spend, sponsoredDemo.spendCap) : null,
     },
   }));
   app.post<{ Params: { id: string }; Headers: { "idempotency-key"?: string } }>("/api/standing-orders/:id/run", async (request, reply) => {
@@ -63,7 +59,7 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
     if (request.headers["x-resource-payment-confirmation"] !== request.params.cycleId) {
       return reply.code(400).send({ error: "Explicit payment confirmation is required" });
     }
-    try { return await orchestrator.confirmPayment(request.params.cycleId, sponsoredDemo.enabled ? sponsoredDemo.spendCap : undefined); }
+    try { return await orchestrator.confirmPayment(request.params.cycleId); }
     catch (error) { return reply.code(409).send({ error: String(error) }); }
   });
   app.post("/api/direct-proof/simulate", async (_request, reply) => {
@@ -119,27 +115,10 @@ function isSponsoredDemoRoute(method: string, route: string) {
 }
 
 function readSponsoredDemoConfig(executionMode: "demo" | "keeperhub") {
-  const parsedCap = Number(process.env.PUBLIC_DEMO_SPEND_CAP ?? "0.10");
   return {
     enabled: executionMode === "keeperhub" && process.env.PUBLIC_DEMO_ENABLED === "true",
-    spendCap: Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 0.10,
     pendingPaymentMaxAgeMs: 5 * 60 * 1000,
   };
-}
-
-function sponsoredDemoLimitError(state: ReturnType<ProcurementOrchestrator["snapshot"]>, spendCap: number, route: string) {
-  const remaining = remainingSponsoredSpend(state.metrics.spend, spendCap);
-  if (route === "/api/procurement/:cycleId/confirm-payment") {
-    const amount = state.pendingPayment?.amount ?? 0;
-    return amount > remaining + Number.EPSILON ? "Sponsored live-demo budget has been exhausted" : null;
-  }
-  const availablePrices = state.providers.filter((provider) => provider.state !== "ineligible").map((provider) => provider.price);
-  const minimumPrice = availablePrices.length > 0 ? Math.min(...availablePrices) : state.order.maxPrice;
-  return minimumPrice > remaining + Number.EPSILON ? "Sponsored live-demo budget has been exhausted" : null;
-}
-
-function remainingSponsoredSpend(spend: number, spendCap: number) {
-  return Math.max(0, Number((spendCap - spend).toFixed(6)));
 }
 
 function secureEqual(provided: string, expected: string) {

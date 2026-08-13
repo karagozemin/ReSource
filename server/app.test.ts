@@ -128,7 +128,7 @@ describe("procurement API", () => {
       const runtime = await app.inject({ method: "GET", url: "/api/runtime" });
       expect(publicRun.statusCode).toBe(200);
       expect(protectedToggle.statusCode).toBe(401);
-      expect(runtime.json()).toMatchObject({ sponsoredDemo: { enabled: true, spendCap: 0.1, remaining: 0.1 } });
+      expect(runtime.json()).toMatchObject({ sponsoredDemo: { enabled: true } });
     } finally {
       if (previousKey === undefined) delete process.env.OPERATOR_API_KEY;
       else process.env.OPERATOR_API_KEY = previousKey;

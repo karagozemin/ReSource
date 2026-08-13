@@ -25,8 +25,6 @@ export type RuntimeInfo = {
   };
   sponsoredDemo: {
     enabled: boolean;
-    spendCap: number | null;
-    remaining: number | null;
   };
 };
 

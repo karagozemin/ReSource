@@ -143,7 +143,7 @@ export function SettingsView({ runtime, executionMode, integrationReady, busy, s
       <section className="workspace-panel settings-panel">
         <div className="section-heading compact"><div><div className="eyebrow">Runtime</div><h2>Automation</h2></div></div>
         <div className="setting-row"><span><strong>Scheduler</strong><small>{runtime.scheduler.pollMs ? `Poll every ${(runtime.scheduler.pollMs / 1000).toFixed(0)} seconds` : "Runtime control unavailable"}</small></span><input type="checkbox" checked={runtime.scheduler.enabled} disabled={busy || sponsoredDemo || runtime.scheduler.pollMs === null} onChange={(event) => void onSchedulerChange(event.target.checked)} /></div>
-        {sponsoredDemo && <div className="setting-row"><span><strong>Sponsored live demo</strong><small>Public purchases stop at the server-enforced spend cap</small></span><span className="locked-value">{runtime.sponsoredDemo.remaining?.toFixed(2) ?? "0.00"} USDC left</span></div>}
+        {sponsoredDemo && <div className="setting-row"><span><strong>Sponsored live demo</strong><small>Public purchases draw from the runtime wallet after explicit confirmation</small></span><span className="locked-value">Wallet funded</span></div>}
         <div className="setting-row"><span><strong>Automatic fail-closed policy</strong><small>Blocks empty, invalid or over-budget execution</small></span><span className="locked-value">Enforced</span></div>
       </section>
       <section className="workspace-panel settings-panel">

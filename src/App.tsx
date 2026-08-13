@@ -101,7 +101,7 @@ function App() {
   const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
   const [directProof, setDirectProof] = useState<DirectProof>({ status: "ready", chainId: "84532", network: "Base Sepolia", from: null, to: null, gasEstimate: null, executionId: null, transactionHash: null, transactionLink: null, error: null });
   const [cycles, setCycles] = useState<ProcurementCycle[]>([]);
-  const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null }, sponsoredDemo: { enabled: false, spendCap: null, remaining: null } });
+  const [runtime, setRuntime] = useState<RuntimeInfo>({ scheduler: { enabled: false, pollMs: null }, sponsoredDemo: { enabled: false } });
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [operatorDialogOpen, setOperatorDialogOpen] = useState(false);

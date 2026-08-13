@@ -258,7 +258,6 @@ Each interval bucket produces a stable key such as `schedule:SO-001:<bucket>`. R
 | `FRONTEND_ORIGIN` | Production | Comma-separated CORS allowlist. CORS is registered only when this is non-empty. |
 | `OPERATOR_API_KEY` | Production | Required as `x-resource-operator-key` for administrative state changes. |
 | `PUBLIC_DEMO_ENABLED` | Sponsored live demo | Allows public run and confirm-payment requests while keeping administration protected. |
-| `PUBLIC_DEMO_SPEND_CAP` | Sponsored live demo | Persistent total USDC ceiling for all publicly sponsored payments. |
 | `DATA_DIR` | No | State directory, default `./data`. |
 | `SCHEDULER_ENABLED` | No | Starts the in-process trigger only when exactly `true`; default `false`. |
 | `SCHEDULER_POLL_MS` | No | Trigger polling interval, default `30000`. |
@@ -367,7 +366,7 @@ VITE_API_BASE_URL=https://<render-service>.onrender.com
 
 Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In the site, open the workspace, select **Unlock**, enter `OPERATOR_API_KEY`, and then run the quote → review → authorization flow. The operator key lives only until that browser tab/session is closed.
 
-The scheduler must remain off. `render.yaml` enables a sponsored live demo with a persistent `0.10 USDC` total cap. Visitors do not need the operator key or their own wallet, but every real payment still stops at the explicit dashboard confirmation showing network, token, human and atomic amount, and recipient as required by the **OKX Agent Payments Protocol**. Increase `PUBLIC_DEMO_SPEND_CAP` only when you intentionally add more sponsor budget.
+The scheduler must remain off. `render.yaml` enables a wallet-funded sponsored live demo. Visitors do not need the operator key or their own wallet, but every real payment still stops at the explicit dashboard confirmation showing network, token, human and atomic amount, and recipient as required by the **OKX Agent Payments Protocol**. Fund the runtime wallet only with the amount you are prepared to make available to public visitors.
 
 ## Known limitations
 
