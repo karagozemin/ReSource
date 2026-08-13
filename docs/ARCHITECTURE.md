@@ -108,7 +108,7 @@ The orchestrator chains state mutations on an in-process promise queue. Each cyc
 | Component | Responsibility | Inputs and outputs | Dependencies | Failure behavior | Source |
 | --- | --- | --- | --- | --- | --- |
 | React operations UI | Loads state; exposes overview, policy, providers, executions, scheduler, quote authorization and direct-proof controls. | HTTP JSON and operator actions; renders `AppState`. | Fastify API; shared ranking function for display. | Keeps the last loaded state and shows request errors. It does not hold secrets. | `src/App.tsx`, `src/WorkspaceViews.tsx` |
-| HTTP API | Maps HTTP operations to orchestrator and scheduler methods; validates route identity/header presence and CORS origin. | `/api/*` requests and JSON responses. | Fastify, `@fastify/cors`. | Returns route-specific `400`, `404`, `409` or `503`; no authentication layer exists. | `server/app.ts` |
+| HTTP API | Maps HTTP operations to orchestrator and scheduler methods; validates route identity/header presence, operator authorization and CORS origin. | `/api/*` requests and JSON responses. | Fastify, `@fastify/cors`. | Returns route-specific `400`, `401`, `404`, `409` or `503`; production mutations fail closed when the operator key is missing, except the two public sponsored-demo routes. | `server/app.ts` |
 | Trigger engine | Polls the order and derives one stable idempotency key per cadence bucket. | `AppState`, clock and poll interval; optional cycle result. | Orchestrator. | Skips paused, unconfigured or payment-pending state. Timer is process-local. | `server/scheduler.ts` |
 | Procurement orchestrator | Owns lifecycle, serialized mutation, idempotency, policy decisions, quote/payment state, verification, recovery, metrics and audit events. | Cycle keys and operator commands; returns cloned state and cycle records. | Store, policy functions, execution/Marketplace/direct clients. | Persists terminal policy/no-provider/failure states where implemented; external discovery and wallet errors may return an API error while retaining a safe state. | `server/orchestrator.ts` |
 | Policy and scoring | Applies hard eligibility filters, calculates score and ranks candidates. | `Provider[]`, `StandingOrder`, accumulated spend; `ProviderDecision[]`. | Shared domain types only. | Rejected candidates have `score: null` and a stable reason. | `src/lib/procurement.ts` |
@@ -132,13 +132,13 @@ The orchestrator chains state mutations on an in-process promise queue. Each cyc
 6. `TriggerEngine` starts only when `SCHEDULER_ENABLED` is exactly `true`.
 7. Fastify binds to `HOST` and `PORT`.
 
-Marketplace readiness checks the API key, buyer address and at least two slugs. It does not preflight the `onchainos` binary, wallet session, funds or remote listing availability; those fail at their actual call boundaries.
+Marketplace readiness checks the API key, buyer address and at least two slugs. The application-level check does not inspect wallet funds or remote listing availability; those fail at their actual call boundaries. In the provided Render deployment, `render-start.sh` separately verifies the packaged `onchainos` wallet session before starting Fastify and fails closed when the Secret File is missing, empty or unauthenticated.
 
 ## 6. Full procurement lifecycle
 
 ```mermaid
 sequenceDiagram
-    actor O as Operator or Scheduler
+    actor O as Browser user or Scheduler
     participant A as Fastify API
     participant P as ProcurementOrchestrator
     participant M as MarketplaceClient
@@ -542,16 +542,19 @@ The system does not currently emit traces, Prometheus metrics or a separately im
 - KeeperHub credentials are read only from server environment variables and are never part of `AppState`.
 - `.env` and runtime state are ignored by Git.
 - The browser receives quote terms but not wallet credentials; payment is performed by the backend CLI process.
+- Production mutations require `OPERATOR_API_KEY`, compared with a timing-safe equality check. Sponsored mode exposes only procurement run and cycle-bound explicit payment confirmation without that key.
 - Policy input ranges are validated server-side. Policy edits are locked while a quote is pending.
 - CORS can restrict browser origins through `FRONTEND_ORIGIN`.
 - `execFile` passes wallet arguments without shell interpolation.
 - Raw wallet command output is mapped to stable errors before persistence.
 - Payment accounting requires a receipt reporting `paid`; result validation is independent from settlement accounting.
 - Direct broadcast requires saved simulation state and a separate operator action.
+- The production image installs a pinned `onchainos` binary only after SHA-256 verification. The Render startup script restores the wallet from a Secret File and refuses to start KeeperHub mode unless the session is authenticated.
 
 ### Trust boundaries and gaps
 
-- The API has no operator authentication, authorization, CSRF token or rate limit. CORS is not access control for non-browser clients.
+- Operator authorization is one shared static secret rather than user identities, roles or expiring server-issued sessions. There is no CSRF token or application rate limit, and CORS is not access control for non-browser clients.
+- Sponsored mode intentionally makes run and explicit payment-confirmation routes public. It has no separate sponsor spend cap, so wallet funding is the outer public-exposure boundary; Standing Order max-price and accumulated-budget checks still apply.
 - Marketplace listing names, prices, schemas and provider outputs are external inputs. ReSource allowlists slugs, enforces numeric price policy and validates the risk result, but does not verify code provenance.
 - `onchainos` and its wallet session are trusted backend dependencies. The app does not constrain wallet policy beyond quote display and ReSource's amount checks.
 - The direct client is code-restricted to a zero-value self-transfer on Base Sepolia, but no generalized transaction allowlist exists because arbitrary direct actions are not implemented.
@@ -561,7 +564,7 @@ The system does not currently emit traces, Prometheus metrics or a separately im
 
 ```mermaid
 flowchart LR
-    User[Operator browser]
+    User[Browser user]
 
     subgraph Vercel[Vercel]
         Web[Static Vite build]
@@ -588,11 +591,11 @@ flowchart LR
     Wallet --> Base
 ```
 
-`vercel.json` defines a Vite build to `dist`. `render.yaml` runs `npm ci && npm run build`, starts `npm start`, checks `/api/health`, pins Node `24.15.0`, and defaults to demo mode with the scheduler disabled.
+`vercel.json` defines a Vite build to `dist`. `render.yaml` builds the multi-stage Docker image from `Dockerfile`, checks `/api/health`, mounts a 1 GB persistent disk at `/app/storage`, selects `EXECUTION_MODE=keeperhub`, enables the sponsored public flow and keeps the scheduler disabled. The image pins Node `24.15.0`, builds the Vite client, installs production dependencies and downloads `onchainos 4.4.10` with checksum verification.
 
-For split deployment, `VITE_API_BASE_URL` points the built browser to Render and `FRONTEND_ORIGIN` allows the Vercel origin. A Render persistent disk can be mounted at `/var/data` and selected with `DATA_DIR=/var/data`. Without it, runtime state resets with an ephemeral instance.
+For split deployment, `VITE_API_BASE_URL` points the built browser to Render and `FRONTEND_ORIGIN` allows the Vercel origin. The Blueprint sets `DATA_DIR=/app/storage/data`; state and the runtime wallet home live on the mounted `/app/storage` disk rather than the ephemeral container filesystem.
 
-KeeperHub mode additionally assumes the `onchainos` executable and wallet authentication are available in the server runtime. The provided Render definition does not install or configure that live-wallet dependency; it is a demo-mode deployment definition.
+The authenticated wallet is exported locally to the gitignored `render-wallet.b64` package and attached to the Render service as `/etc/secrets/onchainos-wallet.b64`. `render-start.sh` extracts it into `/app/storage/home/.onchainos`, checks `wallet status`, and starts the API only when `loggedIn` is true. The credential package is never part of the image or repository.
 
 ## 18. Repository map
 
@@ -637,7 +640,7 @@ Hard ceilings and floors represent authority: they must not be traded away. Scor
 
 ### Explicit payment authorization
 
-Scheduler-driven purchasing would be unsafe with the current single-process store and unauthenticated API. Persisting quotes creates an inspectable point between autonomous selection and funds movement. Expired quotes cannot silently reuse prior consent.
+Unattended scheduler-driven purchasing would be unsafe with the current single-process store and shared-secret authorization model. The production scheduler therefore remains disabled. Persisting quotes creates an inspectable point between autonomous selection and funds movement, and expired quotes cannot silently reuse prior consent.
 
 ### KeeperHub execution below ReSource procurement
 
@@ -659,12 +662,13 @@ The hackathon proof path is intentionally a fixed, separately authorized zero-va
 - “Daily” budget is cumulative spend without date rollover or quote-time reservation.
 - Provider suspension is binary and immediate; `degraded` is not used.
 - Catalog order is the implicit tie-breaker.
-- Replacement selection is automatic, but each Marketplace payment remains operator-authorized.
+- Replacement selection is automatic, but each Marketplace payment still requires explicit browser confirmation.
 - Paid-but-invalid results can consume budget before re-procurement, as x402 settles before result verification.
 - JSON storage, promise serialization and the scheduler are single-process mechanisms.
 - Scheduler enablement toggled through the API does not survive restart.
-- API access is unauthenticated and must not be exposed as a live spending control plane.
-- The deployed Render configuration supports demo mode; live wallet CLI provisioning is not encoded.
+- Administrative mutations use one shared operator key; there are no per-user identities, roles, expiring sessions or application rate limits.
+- Sponsored mode publicly exposes procurement run and explicit payment confirmation. It has no sponsor-wide spend cap, so the deployed wallet must be funded only with the amount intended for public use.
+- The Render Blueprint provisions live KeeperHub mode, a checksum-verified wallet CLI, a persistent disk and fail-closed Secret File restoration; wallet credential rotation remains a manual operator procedure.
 - Direct execution supports only Base Sepolia and one proof action.
 - MPP, smart contracts, database models, multi-tenant orders and provider-side code are absent from this repository.
 - Tests mock KeeperHub and wallet boundaries; there is no automated live integration suite.
@@ -674,7 +678,7 @@ The hackathon proof path is intentionally a fixed, separately authorized zero-va
 The next architecture should preserve the current policy/payment separation while replacing the infrastructure around it:
 
 1. Store orders, dated spend entries, provider observations, quotes and cycle transitions in a transactional database with uniqueness on idempotency keys.
-2. Add authenticated operator/service identities, role-based payment authorization and wallet policy scopes.
+2. Replace the shared operator key with expiring operator/service identities, role-based payment authorization and wallet policy scopes.
 3. Move cadence evaluation to a durable job queue; reserve budget when a quote is created and release it when the quote expires.
 4. Register service-specific input builders and result verifiers so additional provider categories do not weaken validation.
 5. Model provider states and cooldown/requalification explicitly, including multiple observations rather than immediate permanent suspension.

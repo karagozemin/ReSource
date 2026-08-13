@@ -42,7 +42,7 @@ flowchart LR
     D --> P[Apply hard policy filters]
     P --> S[Score eligible providers]
     S --> Q[Request x402 quote]
-    Q --> A[Operator authorizes payment]
+    Q --> A[User explicitly authorizes payment]
     A --> K[KeeperHub paid workflow]
     K --> V{Schema and SLA valid?}
     V -->|Yes| H[Update provider history]
@@ -303,14 +303,14 @@ Live evidence is written to `data/runtime.json`. The file is intentionally ignor
 ## Safety properties
 
 - Hard policy checks run before selection, and budget/order checks run again immediately before payment.
-- A quote that differs from the selected listing price is blocked. An expired quote requires a fresh operator authorization; changed terms are blocked.
+- A quote that differs from the selected listing price is blocked. An expired quote requires a fresh explicit authorization; changed terms are blocked.
 - State-changing orchestrator operations are serialized in-process, and cycle idempotency keys are persisted.
 - Purchases and spend increase only from a successful x402 settlement receipt in live mode.
 - Provider output must contain a valid `riskLevel`, a numeric `riskScore` from 0 to 100 and a `factors` array, and must arrive within the Standing Order SLA.
 - Provider failure immediately suspends that provider. Automatic failover never bypasses payment authorization.
 - Direct execution requires simulation before the separate broadcast action and uses a unique KeeperHub idempotency key.
 - Wallet command errors are reduced to stable messages before persistence; backend secrets are not returned in application state.
-- Administrative production POST/PATCH endpoints require a timing-safe operator-key check. When the sponsored live demo is enabled, only procurement run and explicit payment confirmation are public; the server re-checks a persistent total spend cap inside the serialized payment gate.
+- Administrative production POST/PATCH endpoints require a timing-safe operator-key check. When the sponsored live demo is enabled, only procurement run and explicit payment confirmation are public. There is no separate sponsor spend cap; Standing Order price and accumulated-budget checks still run immediately before payment, and the runtime wallet should contain only the funds intended for public use.
 
 ## Testing
 
@@ -364,7 +364,7 @@ Use repository root, Vite, build command `npm run build`, and output directory `
 VITE_API_BASE_URL=https://<render-service>.onrender.com
 ```
 
-Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In the site, open the workspace, select **Unlock**, enter `OPERATOR_API_KEY`, and then run the quote → review → authorization flow. The operator key lives only until that browser tab/session is closed.
+Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In sponsored mode, visitors can run the quote → review → authorization flow without **Unlock**. Use **Unlock** and `OPERATOR_API_KEY` only for protected administrative controls; the key lives only until that browser tab/session is closed.
 
 The scheduler must remain off. `render.yaml` enables a wallet-funded sponsored live demo. Visitors do not need the operator key or their own wallet, but every real payment still stops at the explicit dashboard confirmation showing network, token, human and atomic amount, and recipient as required by the **OKX Agent Payments Protocol**. Fund the runtime wallet only with the amount you are prepared to make available to public visitors.
 
