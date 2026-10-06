@@ -127,9 +127,13 @@ function App() {
   );
 
   const selected = providers.find((provider) => provider.id === selectedId) ?? null;
+  const latestSolanaSettlement = cycles.find((cycle) => cycle.paymentProtocol === "spl" && cycle.transactionLink) ?? null;
+  const latestSolanaProvider = latestSolanaSettlement
+    ? providers.find((provider) => provider.id === latestSolanaSettlement.selectedProviderId) ?? null
+    : null;
   const isPaused = order.status === "paused";
   const busy = pending || mode === "running" || mode === "recovering";
-  const sponsoredDemo = executionMode === "keeperhub" && runtime.sponsoredDemo?.enabled === true;
+  const sponsoredDemo = executionMode !== "demo" && runtime.sponsoredDemo?.enabled === true;
 
   useEffect(() => {
     if (!notice) return;
@@ -213,7 +217,7 @@ function App() {
     startOperationFlow("procurement");
     try {
       const [response] = await Promise.all([
-        apiRequest<{ state: AppState }>(`/api/standing-orders/${order.id}/run`, {
+        apiRequest<{ state: AppState; cycle: ProcurementCycle }>(`/api/standing-orders/${order.id}/run`, {
           method: "POST",
           headers: { "idempotency-key": crypto.randomUUID() },
         }),
@@ -221,10 +225,20 @@ function App() {
       ]);
       applyState(response.state);
       const quote = response.state.pendingPayment;
+      const solanaSettlement = response.cycle.paymentProtocol === "spl" && response.cycle.transactionLink
+        ? response.cycle
+        : null;
+      const provider = response.state.providers.find((item) => item.id === response.cycle.selectedProviderId);
       finishOperationFlow(
         "success",
-        quote ? "Provider selected. Quote secured." : "Procurement cycle verified.",
-        quote ? `${quote.amount.toFixed(2)} ${quote.token} on ${quote.chainName} is ready for review.` : "The selected provider satisfied the Standing Order.",
+        quote ? "Provider selected. Quote secured." : solanaSettlement ? "Solana payment confirmed." : "Procurement cycle verified.",
+        quote
+          ? `${quote.amount.toFixed(2)} ${quote.token} on ${quote.chainName} is ready for review.`
+          : solanaSettlement
+            ? `${solanaSettlement.amount.toFixed(2)} tUSDC settled to ${provider?.name ?? "the selected provider"}. The service result passed verification.`
+            : "The selected provider satisfied the Standing Order.",
+        solanaSettlement?.transactionLink ?? null,
+        solanaSettlement ? "View payment on Solana Explorer" : null,
       );
     } catch (error) {
       setMode("ready");
@@ -522,6 +536,13 @@ function App() {
               )}
               {executionMode === "demo" && <button className="icon-button in-panel" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
             </div>
+            {executionMode === "solana" && latestSolanaSettlement && (
+              <div className="direct-proof">
+                <div><span>Latest Solana settlement</span><strong>{latestSolanaSettlement.amount.toFixed(2)} tUSDC</strong></div>
+                <small>{latestSolanaProvider?.name ?? "Selected provider"} · confirmed SPL payment on devnet</small>
+                <a href={latestSolanaSettlement.transactionLink!} target="_blank" rel="noreferrer">View payment on Solana Explorer <ExternalLink size={13} /></a>
+              </div>
+            )}
             {executionMode === "keeperhub" && (
               <div className="direct-proof">
                 <div><span>Direct onchain proof</span><strong>{directProof.network}</strong></div>
