@@ -216,21 +216,35 @@ describe("ProcurementOrchestrator", () => {
   });
 
   it("records Solana settlement and automatically pays the replacement", async () => {
+    const executionContexts: Array<{ procurementId: string; replacement: boolean }> = [];
+    const breachIds: string[] = [];
     const solanaAdapter: ExecutionAdapter = {
       mode: "solana",
       isReady: () => true,
-      execute: async (provider) => ({
-        executionId: `solana-${provider.id}`,
-        success: true,
-        latencyMs: 500,
-        output: { riskLevel: "low", riskScore: 12, factors: [] },
-        transactionHash: `signature-${provider.id}`,
-        transactionLink: `https://explorer.solana.com/tx/signature-${provider.id}?cluster=devnet`,
-        error: null,
-        paid: true,
-        amount: provider.price,
-        paymentProtocol: "spl",
-      }),
+      execute: async (provider, _order, context) => {
+        executionContexts.push(context!);
+        return {
+          executionId: `solana-${provider.id}`,
+          success: true,
+          latencyMs: 500,
+          output: { riskLevel: "low", riskScore: 12, factors: [] },
+          transactionHash: `signature-${provider.id}`,
+          transactionLink: `https://explorer.solana.com/tx/signature-${provider.id}?cluster=devnet`,
+          error: null,
+          paid: true,
+          amount: provider.price,
+          paymentProtocol: "spl",
+          procurementAddress: "registry-pda",
+        };
+      },
+      markBreached: async (procurementId) => {
+        breachIds.push(procurementId);
+        return {
+          signature: "breach-signature",
+          explorerUrl: "https://explorer.solana.com/tx/breach-signature?cluster=devnet",
+          procurementAddress: "registry-pda",
+        };
+      },
     };
     const buyer = new ProcurementOrchestrator(new MemoryStateStore(), solanaAdapter);
     await buyer.initialize();
@@ -252,6 +266,15 @@ describe("ProcurementOrchestrator", () => {
     });
     expect(recovery.state.selectedProviderId).toBe("atlas");
     expect(recovery.state.metrics).toMatchObject({ purchases: 2, executions: 2, recoveries: 1, spend: 0.08 });
+    expect(executionContexts).toEqual([
+      { procurementId: first.cycle.id, replacement: false },
+      { procurementId: first.cycle.id, replacement: true },
+    ]);
+    expect(breachIds).toEqual([first.cycle.id]);
+    expect(recovery.state.cycles.find((cycle) => cycle.id === first.cycle.id)).toMatchObject({
+      breachTransactionHash: "breach-signature",
+      procurementAddress: "registry-pda",
+    });
   });
 
   it("persists a settling cycle before Solana payment execution completes", async () => {

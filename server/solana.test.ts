@@ -34,8 +34,14 @@ describe("Solana settlement boundary", () => {
           amount,
           token: "USDC",
           recipient: provider.paymentAddress!,
+          procurementAddress: TEST_SOLANA_ADDRESS,
         };
       },
+      markBreached: async () => ({
+        signature: "breach-signature",
+        explorerUrl: "https://explorer.solana.com/tx/breach-signature?cluster=devnet",
+        procurementAddress: TEST_SOLANA_ADDRESS,
+      }),
     };
     const request = vi.fn(async () => {
       actions.push("execute:sentinel");
@@ -52,7 +58,11 @@ describe("Solana settlement boundary", () => {
     );
 
     expect(adapter.isReady()).toBe(true);
-    const result = await adapter.execute(initialProviders.find((provider) => provider.id === "sentinel")!, standingOrder);
+    const result = await adapter.execute(
+      initialProviders.find((provider) => provider.id === "sentinel")!,
+      standingOrder,
+      { procurementId: "cycle-test", replacement: false },
+    );
 
     expect(actions).toEqual(["pay:sentinel", "execute:sentinel"]);
     expect(result).toMatchObject({
@@ -74,6 +84,12 @@ describe("Solana settlement boundary", () => {
         amount,
         token: "USDC",
         recipient: provider.paymentAddress!,
+        procurementAddress: TEST_SOLANA_ADDRESS,
+      }),
+      markBreached: async () => ({
+        signature: "breach-signature",
+        explorerUrl: "https://explorer.solana.com/tx/breach-signature?cluster=devnet",
+        procurementAddress: TEST_SOLANA_ADDRESS,
       }),
     };
     const adapter = new SolanaExecutionAdapter(
@@ -83,7 +99,11 @@ describe("Solana settlement boundary", () => {
       { sentinel: TEST_SOLANA_ADDRESS, atlas: TEST_SOLANA_ADDRESS },
     );
 
-    const result = await adapter.execute(initialProviders.find((provider) => provider.id === "sentinel")!, standingOrder);
+    const result = await adapter.execute(
+      initialProviders.find((provider) => provider.id === "sentinel")!,
+      standingOrder,
+      { procurementId: "cycle-test", replacement: false },
+    );
     expect(result).toMatchObject({ success: false, paid: true, amount: 0.03, transactionHash: "paid-signature" });
   });
 });

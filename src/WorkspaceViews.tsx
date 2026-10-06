@@ -96,7 +96,7 @@ type CycleFilter = "all" | "paid" | "failed";
 export function ExecutionsView({ cycles, providers, directProof }: { cycles: ProcurementCycle[]; providers: Provider[]; directProof: DirectProof }) {
   const [filter, setFilter] = useState<CycleFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(cycles[0]?.id ?? null);
-  const filtered = useMemo(() => cycles.filter((cycle) => filter === "all" || (filter === "paid" ? cycle.paymentProtocol === "x402" : ["failed", "policy_blocked", "no_provider"].includes(cycle.status))), [cycles, filter]);
+  const filtered = useMemo(() => cycles.filter((cycle) => filter === "all" || (filter === "paid" ? Boolean(cycle.paymentProtocol) : ["failed", "policy_blocked", "no_provider"].includes(cycle.status))), [cycles, filter]);
   const selected = cycles.find((cycle) => cycle.id === selectedId) ?? filtered[0] ?? null;
   const providerName = (id: string | null) => providers.find((provider) => provider.id === id)?.name ?? id ?? "None";
 
@@ -121,6 +121,8 @@ export function ExecutionsView({ cycles, providers, directProof }: { cycles: Pro
           <Detail label="Amount" value={selected.amount ? `${selected.amount.toFixed(2)} USDC` : "0 USDC"} />
           <Detail label="Execution" value={selected.executionId ? shortId(selected.executionId) : "Not recorded"} />
           {selected.transactionHash && <div><dt>Transaction</dt><dd><a href={selected.transactionLink ?? `https://basescan.org/tx/${selected.transactionHash}`} target="_blank" rel="noreferrer">{shortId(selected.transactionHash)} <ExternalLink size={12} /></a></dd></div>}
+          {selected.procurementAddress && <div><dt>Registry PDA</dt><dd><a href={solanaAccountLink(selected.procurementAddress, selected.transactionLink)} target="_blank" rel="noreferrer">{shortId(selected.procurementAddress)} <ExternalLink size={12} /></a></dd></div>}
+          {selected.breachTransactionHash && <div><dt>SLA breach</dt><dd><a href={selected.breachTransactionLink ?? `https://explorer.solana.com/tx/${selected.breachTransactionHash}`} target="_blank" rel="noreferrer">{shortId(selected.breachTransactionHash)} <ExternalLink size={12} /></a></dd></div>}
           {selected.error && <div className="detail-error"><dt>Error</dt><dd>{selected.error}</dd></div>}
         </dl> : <div className="empty-state">No cycle selected.</div>}
         <div className="proof-summary"><span>Direct proof · {directProof.network}</span><strong>{directProof.status}</strong>{directProof.transactionLink && <a href={directProof.transactionLink} target="_blank" rel="noreferrer">View proof <ExternalLink size={12} /></a>}</div>
@@ -159,3 +161,6 @@ function SummaryRow({ icon, label, value }: { icon: React.ReactNode; label: stri
 function Detail({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
 function toUpdate(order: StandingOrder): StandingOrderUpdate { return { intervalMinutes: order.intervalMinutes, maxPrice: order.maxPrice, dailyBudget: order.dailyBudget, maxLatencyMs: order.maxLatencyMs, minReliability: order.minReliability, automaticFailover: order.automaticFailover }; }
 function shortId(value: string) { return value.length > 20 ? `${value.slice(0, 10)}...${value.slice(-7)}` : value; }
+function solanaAccountLink(value: string, transactionLink?: string | null) {
+  return `https://explorer.solana.com/address/${encodeURIComponent(value)}${transactionLink?.includes("cluster=devnet") ? "?cluster=devnet" : ""}`;
+}

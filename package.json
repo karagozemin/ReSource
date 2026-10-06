@@ -9,6 +9,8 @@
     "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
     "build": "tsc -b && vite build",
+    "anchor:build": "anchor build",
+    "anchor:test": "cargo test -p resource-registry",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint ."

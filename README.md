@@ -12,7 +12,7 @@ KeeperHub supplies the Marketplace, paid workflow and onchain execution boundari
 
 **[How it works](#procurement-loop) · [KeeperHub integration](#keeperhub-integration) · [Live proof](#live-execution-proof) · [Run locally](#run-locally) · [Full architecture](docs/ARCHITECTURE.md)**
 
-> Current scope: the existing KeeperHub/Base path remains available, while `EXECUTION_MODE=solana` adds the first migration phase: confirmed SPL settlement, provider HTTP execution, automatic paid failover and Solana Explorer evidence. The onchain procurement registry is the next phase.
+> Current scope: the existing KeeperHub/Base path remains available, while `EXECUTION_MODE=solana` adds confirmed SPL settlement, an Anchor procurement registry, provider HTTP execution, automatic paid failover and Solana Explorer evidence. Devnet deployment and live provider proof remain deployment steps.
 
 ## Live execution proof
 
@@ -51,6 +51,8 @@ flowchart LR
     F --> R[Re-procure replacement]
     R --> Q
 ```
+
+In Solana mode, the first SPL payment and `create_procurement` instruction are submitted as one non-divisible transaction. A provider failure records `active → breached`; the replacement SPL payment and `replace_provider` instruction are then submitted atomically. If a registry instruction fails, its paired token transfer fails with the same transaction.
 
 The scheduler can trigger discovery and selection automatically. In the live Marketplace path it stops at `awaiting_payment`; every fresh or refreshed quote must be authorized from the dashboard. Demo mode executes without funds and can complete the loop unattended.
 
@@ -170,6 +172,8 @@ ReSource/
 │   ├── marketplace.ts          # KeeperHub MCP discovery and x402 wallet calls
 │   ├── direct-execution.ts     # Simulate, broadcast and poll direct proof
 │   ├── adapters.ts             # Demo and organization-workflow adapters
+│   ├── solana.ts               # Atomic SPL settlement and registry lifecycle adapter
+│   ├── solana-registry.ts      # Anchor instruction encoding and procurement PDA derivation
 │   ├── scheduler.ts            # Interval trigger and stable schedule keys
 │   ├── store.ts                # Atomic JSON and in-memory test stores
 │   └── *.test.ts               # API, orchestration and scheduler tests
@@ -179,6 +183,8 @@ ReSource/
 │   ├── lib/procurement.ts      # Eligibility, scoring and failure updates
 │   ├── data/demo.ts            # Reproducible order and provider fixtures
 │   └── types.ts                # Shared state and domain contracts
+├── programs/
+│   └── resource-registry/      # Anchor active → breached → replaced program
 ├── docs/
 │   ├── ARCHITECTURE.md         # Complete system design
 │   ├── KEEPERHUB.md            # KeeperHub boundary notes
@@ -191,7 +197,7 @@ ReSource/
 └── package.json
 ```
 
-This is a single npm package, not a monorepo. It contains no smart contracts or provider implementations; the providers are external KeeperHub Marketplace workflows.
+The web/API runtime remains a single npm package. The repository also contains the standalone Anchor registry workspace; provider implementations remain external services.
 
 ## Run locally
 
@@ -201,6 +207,7 @@ This is a single npm package, not a monorepo. It contains no smart contracts or 
 - For demo mode: no wallet, API key or funds.
 - For KeeperHub mode: a KeeperHub API key, buyer address, access to the configured Marketplace listings and `onchainos` CLI with a usable Agentic Wallet account.
 - For Solana mode: a dedicated low-balance service keypair, an SPL mint, a private RPC endpoint and two provider endpoint/payment-address pairs.
+- For program development: Rust `1.89`, Solana CLI `4.1.x` and Anchor CLI `1.2.x`.
 
 ### Demo mode
 
@@ -260,13 +267,14 @@ SOLANA_RPC_URL=https://<private-rpc-endpoint>
 SOLANA_KEYPAIR_PATH=/absolute/path/to/solana-keypair.json
 SOLANA_TOKEN_MINT=<spl-mint>
 SOLANA_TOKEN_DECIMALS=6
+SOLANA_REGISTRY_PROGRAM_ID=G3sta1z39YXTX5dopAXtuv6kqBTQGoN9G85DMW3WVvm4
 RESOURCE_PROVIDER_SENTINEL_URL=https://<provider-a>/risk
 RESOURCE_PROVIDER_SENTINEL_SOLANA_ADDRESS=<provider-a-wallet>
 RESOURCE_PROVIDER_ATLAS_URL=https://<provider-b>/risk
 RESOURCE_PROVIDER_ATLAS_SOLANA_ADDRESS=<provider-b-wallet>
 ```
 
-The first cycle pays Sentinel and records the confirmed signature. Controlled failure suspends Sentinel, selects Atlas, sends the second payment and preserves both Explorer links. See [`docs/SOLANA_MIGRATION.md`](docs/SOLANA_MIGRATION.md) for the implemented boundary and remaining onchain registry work.
+The first cycle atomically pays Sentinel and creates an `Active` procurement PDA. Controlled failure records `Breached`, suspends Sentinel, selects Atlas, atomically pays the replacement and moves the same PDA to `Replaced`. Payment, breach, registry-account and replacement Explorer links are preserved in the execution audit. See [`docs/SOLANA_MIGRATION.md`](docs/SOLANA_MIGRATION.md) for deployment status.
 
 ## Environment variables
 
@@ -298,6 +306,7 @@ The first cycle pays Sentinel and records the confirmed signature. Controlled fa
 | `SOLANA_TOKEN_MINT` | Solana mode | Exact SPL token mint to settle. |
 | `SOLANA_TOKEN_SYMBOL` | No | Display symbol, default `USDC`. |
 | `SOLANA_TOKEN_DECIMALS` | No | Mint decimals, default `6`; checked by the Token Program transfer. |
+| `SOLANA_REGISTRY_PROGRAM_ID` | No | Defaults to the program ID in `Anchor.toml`; override only when deploying another program keypair. |
 | `RESOURCE_PROVIDER_*_URL` | Solana mode | Sentinel and Atlas HTTP service endpoints. |
 | `RESOURCE_PROVIDER_*_SOLANA_ADDRESS` | Solana mode | Sentinel and Atlas recipient wallet addresses. |
 

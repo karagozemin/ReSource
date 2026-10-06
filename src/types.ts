@@ -112,6 +112,10 @@ export type ProcurementCycle = {
   executionId: string | null;
   transactionHash: string | null;
   transactionLink?: string | null;
+  procurementId?: string | null;
+  procurementAddress?: string | null;
+  breachTransactionHash?: string | null;
+  breachTransactionLink?: string | null;
   error: string | null;
 };
 

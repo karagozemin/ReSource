@@ -12,12 +12,25 @@ export type ExecutionResult = {
   paid?: boolean;
   amount?: number;
   paymentProtocol?: PaymentProtocol;
+  procurementAddress?: string | null;
+};
+
+export type ExecutionContext = {
+  procurementId: string;
+  replacement: boolean;
+};
+
+export type BreachReceipt = {
+  signature: string;
+  explorerUrl: string;
+  procurementAddress: string;
 };
 
 export interface ExecutionAdapter {
   readonly mode: ExecutionMode;
   isReady(): boolean;
-  execute(provider: Provider, order: StandingOrder): Promise<ExecutionResult>;
+  execute(provider: Provider, order: StandingOrder, context?: ExecutionContext): Promise<ExecutionResult>;
+  markBreached?(procurementId: string): Promise<BreachReceipt>;
 }
 
 export class DemoExecutionAdapter implements ExecutionAdapter {

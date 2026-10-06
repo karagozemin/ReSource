@@ -1,11 +1,17 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { address, createClient } from "@solana/kit";
+import { address, createClient, nonDivisibleSequentialInstructionPlan } from "@solana/kit";
 import { tokenProgram } from "@solana-program/token";
 import { solanaRpc } from "@solana/kit-plugin-rpc";
 import { signerFromFile } from "@solana/kit-plugin-signer";
 import type { Provider, StandingOrder } from "../src/types";
-import type { ExecutionAdapter, ExecutionResult } from "./adapters";
+import type { BreachReceipt, ExecutionAdapter, ExecutionContext, ExecutionResult } from "./adapters";
+import {
+  getCreateProcurementInstruction,
+  getMarkBreachedInstruction,
+  getReplaceProviderInstruction,
+  RESOURCE_REGISTRY_PROGRAM_ID,
+} from "./solana-registry";
 
 export type SolanaCluster = "devnet" | "mainnet-beta";
 
@@ -15,11 +21,15 @@ export type SolanaSettlementReceipt = {
   amount: number;
   token: string;
   recipient: string;
+  procurementAddress: string;
 };
+
+export type SolanaPaymentContext = ExecutionContext & Pick<StandingOrder, "service" | "maxLatencyMs">;
 
 export interface SolanaSettlement {
   isReady(): boolean;
-  pay(provider: Provider, amount: number): Promise<SolanaSettlementReceipt>;
+  pay(provider: Provider, amount: number, context: SolanaPaymentContext): Promise<SolanaSettlementReceipt>;
+  markBreached(procurementId: string): Promise<BreachReceipt>;
 }
 
 export type SolanaSettlementConfig = {
@@ -30,6 +40,7 @@ export type SolanaSettlementConfig = {
   tokenMint: string;
   tokenSymbol: string;
   tokenDecimals: number;
+  registryProgramId: string;
 };
 
 type ProviderEndpoints = Record<string, string | undefined>;
@@ -44,30 +55,49 @@ export class KitSolanaSettlement implements SolanaSettlement {
       && this.config.keypairPath
       && existsSync(this.config.keypairPath)
       && isValidSolanaAddress(this.config.tokenMint)
+      && isValidSolanaAddress(this.config.registryProgramId)
       && Number.isInteger(this.config.tokenDecimals)
       && this.config.tokenDecimals >= 0
       && this.config.tokenDecimals <= 18,
     );
   }
 
-  async pay(provider: Provider, amount: number): Promise<SolanaSettlementReceipt> {
+  async pay(provider: Provider, amount: number, context: SolanaPaymentContext): Promise<SolanaSettlementReceipt> {
     if (!this.isReady()) throw new Error("Solana settlement is not configured");
     if (!provider.paymentAddress) throw new Error(`No Solana payment address configured for ${provider.name}`);
 
-    const signerClient = await createClient().use(signerFromFile(this.config.keypairPath));
-    const client = signerClient
-      .use(solanaRpc({
-        rpcUrl: this.config.rpcUrl as `http${string}`,
-        rpcSubscriptionsUrl: this.config.rpcSubscriptionsUrl as `ws${string}` | undefined,
-      }))
-      .use(tokenProgram());
-    const result = await client.token.instructions.transferToATA({
+    const client = await this.createClient();
+    const amountBaseUnits = toBaseUnits(amount, this.config.tokenDecimals);
+    const transferPlan = await client.token.instructions.transferToATA({
       mint: address(this.config.tokenMint),
       authority: client.payer,
       recipient: address(provider.paymentAddress),
-      amount: toBaseUnits(amount, this.config.tokenDecimals),
+      amount: amountBaseUnits,
       decimals: this.config.tokenDecimals,
-    }).sendTransaction();
+    });
+    const registryInput = {
+      buyer: client.payer,
+      programId: address(this.config.registryProgramId),
+      procurementId: context.procurementId,
+    };
+    const registry = context.replacement
+      ? await getReplaceProviderInstruction({
+        ...registryInput,
+        replacement: address(provider.paymentAddress),
+        replacementAmount: amountBaseUnits,
+      })
+      : await getCreateProcurementInstruction({
+        ...registryInput,
+        service: context.service,
+        provider: address(provider.paymentAddress),
+        tokenMint: address(this.config.tokenMint),
+        amount: amountBaseUnits,
+        maxLatencyMs: context.maxLatencyMs,
+      });
+    const result = await client.sendTransaction(nonDivisibleSequentialInstructionPlan([
+      transferPlan,
+      registry.instruction,
+    ]));
     const signature = String(result.context.signature);
 
     return {
@@ -76,7 +106,35 @@ export class KitSolanaSettlement implements SolanaSettlement {
       amount,
       token: this.config.tokenSymbol,
       recipient: provider.paymentAddress,
+      procurementAddress: registry.procurementAddress,
     };
+  }
+
+  async markBreached(procurementId: string): Promise<BreachReceipt> {
+    if (!this.isReady()) throw new Error("Solana settlement is not configured");
+    const client = await this.createClient();
+    const registry = await getMarkBreachedInstruction({
+      buyer: client.payer,
+      programId: address(this.config.registryProgramId),
+      procurementId,
+    });
+    const result = await client.sendTransaction(registry.instruction);
+    const signature = String(result.context.signature);
+    return {
+      signature,
+      explorerUrl: solanaExplorerUrl(signature, this.config.cluster),
+      procurementAddress: registry.procurementAddress,
+    };
+  }
+
+  private async createClient() {
+    const signerClient = await createClient().use(signerFromFile(this.config.keypairPath));
+    return signerClient
+      .use(solanaRpc({
+        rpcUrl: this.config.rpcUrl as `http${string}`,
+        rpcSubscriptionsUrl: this.config.rpcSubscriptionsUrl as `ws${string}` | undefined,
+      }))
+      .use(tokenProgram());
   }
 }
 
@@ -100,14 +158,19 @@ export class SolanaExecutionAdapter implements ExecutionAdapter {
       && configuredRecipients.every((recipient) => isValidSolanaAddress(recipient!));
   }
 
-  async execute(provider: Provider, order: StandingOrder): Promise<ExecutionResult> {
+  async execute(provider: Provider, order: StandingOrder, context?: ExecutionContext): Promise<ExecutionResult> {
     const endpoint = provider.endpoint ?? this.endpoints[provider.id];
     if (!endpoint) throw new Error(`No service endpoint configured for ${provider.name}`);
+    if (!context) throw new Error("Solana procurement context is required");
 
     const payableProvider = provider.paymentAddress
       ? provider
       : { ...provider, paymentAddress: this.paymentAddresses[provider.id] };
-    const payment = await this.settlement.pay(payableProvider, provider.price);
+    const payment = await this.settlement.pay(payableProvider, provider.price, {
+      ...context,
+      service: order.service,
+      maxLatencyMs: order.maxLatencyMs,
+    });
     const startedAt = Date.now();
     try {
       const response = await this.request(endpoint, {
@@ -135,6 +198,7 @@ export class SolanaExecutionAdapter implements ExecutionAdapter {
         paid: true,
         amount: payment.amount,
         paymentProtocol: "spl",
+        procurementAddress: payment.procurementAddress,
       };
     } catch (error) {
       return {
@@ -148,8 +212,13 @@ export class SolanaExecutionAdapter implements ExecutionAdapter {
         paid: true,
         amount: payment.amount,
         paymentProtocol: "spl",
+        procurementAddress: payment.procurementAddress,
       };
     }
+  }
+
+  markBreached(procurementId: string) {
+    return this.settlement.markBreached(procurementId);
   }
 }
 
@@ -168,6 +237,7 @@ export function readSolanaSettlementConfig(env: NodeJS.ProcessEnv = process.env)
     tokenMint: env.SOLANA_TOKEN_MINT ?? "",
     tokenSymbol: env.SOLANA_TOKEN_SYMBOL || "USDC",
     tokenDecimals: parseTokenDecimals(env.SOLANA_TOKEN_DECIMALS),
+    registryProgramId: env.SOLANA_REGISTRY_PROGRAM_ID || RESOURCE_REGISTRY_PROGRAM_ID,
   };
 }
 

@@ -73,6 +73,17 @@ export class ProcurementOrchestrator {
       if (!selectedId) throw new Error("Run a procurement cycle before injecting failure");
       const selected = this.state.providers.find((provider) => provider.id === selectedId);
       if (!selected) throw new Error("Selected provider not found");
+      let procurementId: string | undefined;
+      if (this.adapter.mode === "solana") {
+        const activeCycle = this.state.cycles.find((cycle) =>
+          cycle.selectedProviderId === selected.id
+          && cycle.status === "completed"
+          && cycle.procurementId,
+        );
+        procurementId = activeCycle?.procurementId ?? undefined;
+        if (!activeCycle || !procurementId) throw new Error("No active onchain procurement record found");
+        await this.recordSolanaBreach(procurementId, activeCycle);
+      }
       if (this.state.pendingPayment) {
         const pendingCycle = this.state.cycles.find((cycle) => cycle.id === this.state.pendingPayment?.cycleId);
         if (pendingCycle) {
@@ -87,7 +98,7 @@ export class ProcurementOrchestrator {
       this.state.providers = this.state.providers.map((provider) => provider.id === selected.id ? applyProviderFailure(provider) : provider);
       this.addEvent("warning", "Provider automatically suspended", "Observed performance breached policy. Re-procurement started.");
       await this.store.save(this.state);
-      return this.runInternal(`recovery-${randomUUID()}`);
+      return this.runInternal(`recovery-${randomUUID()}`, undefined, procurementId);
     });
   }
 
@@ -155,7 +166,11 @@ export class ProcurementOrchestrator {
     return next;
   }
 
-  private async runInternal(idempotencyKey: string, pendingPaymentMaxAgeMs?: number): Promise<ProcurementRunResult> {
+  private async runInternal(
+    idempotencyKey: string,
+    pendingPaymentMaxAgeMs?: number,
+    recoveryProcurementId?: string,
+  ): Promise<ProcurementRunResult> {
     const existing = this.state.cycles.find((cycle) => cycle.idempotencyKey === idempotencyKey);
     if (existing) return { state: this.snapshot(), cycle: existing, replayed: true };
     if (this.state.pendingPayment && pendingPaymentMaxAgeMs !== undefined && isOlderThan(this.state.pendingPayment.createdAt, pendingPaymentMaxAgeMs)) {
@@ -226,13 +241,21 @@ export class ProcurementOrchestrator {
     const provisionalCycle = this.adapter.mode === "solana"
       ? makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "settling", 0, null, null, null)
       : null;
+    const procurementId = this.adapter.mode === "solana"
+      ? recoveryProcurementId ?? cycleId
+      : undefined;
     if (provisionalCycle) {
+      provisionalCycle.procurementId = procurementId;
       this.state.cycles.unshift(provisionalCycle);
       await this.store.save(this.state);
     }
     let result;
     try {
-      result = await this.adapter.execute(winner.provider, this.state.order);
+      result = await this.adapter.execute(
+        winner.provider,
+        this.state.order,
+        procurementId ? { procurementId, replacement: Boolean(recoveryProcurementId) } : undefined,
+      );
     } catch (error) {
       if (provisionalCycle) {
         provisionalCycle.status = "failed";
@@ -260,6 +283,8 @@ export class ProcurementOrchestrator {
       executionId: result.executionId,
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink ?? null,
+      procurementId: procurementId ?? null,
+      procurementAddress: result.procurementAddress ?? null,
       paymentProtocol: result.paymentProtocol ?? null,
       error: verified ? null : result.error ?? "Result verification failed",
       completedAt: new Date().toISOString(),
@@ -271,10 +296,19 @@ export class ProcurementOrchestrator {
       if (this.adapter.mode === "solana") {
         this.state.providers = this.state.providers.map((provider) => provider.id === winner.provider.id ? applyProviderFailure(provider) : provider);
         this.addEvent("warning", "Provider automatically suspended", "Paid provider breached policy. Solana re-procurement started.");
+        try {
+          await this.recordSolanaBreach(procurementId!, cycle);
+        } catch (error) {
+          cycle.error = `${cycle.error}. Onchain breach recording failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.state.mode = "ready";
+          this.addEvent("error", "Onchain breach recording failed", "Replacement payment was blocked; the procurement record remains unchanged.");
+          await this.store.save(this.state);
+          return { state: this.snapshot(), cycle, replayed: false };
+        }
       }
       await this.store.save(this.state);
       if (this.adapter.mode === "solana" && this.state.order.automaticFailover) {
-        return this.runInternal(`recovery-${cycle.id}`);
+        return this.runInternal(`recovery-${cycle.id}`, undefined, procurementId);
       }
       return { state: this.snapshot(), cycle, replayed: false };
     }
@@ -431,6 +465,15 @@ export class ProcurementOrchestrator {
   private addEvent(kind: TimelineEvent["kind"], title: string, detail: string) {
     this.state.events.unshift({ id: randomUUID(), time: new Date().toISOString(), kind, title, detail });
   }
+
+  private async recordSolanaBreach(procurementId: string, cycle: ProcurementCycle) {
+    if (!this.adapter.markBreached) throw new Error("Solana registry breach writer is not configured");
+    const receipt = await this.adapter.markBreached(procurementId);
+    cycle.breachTransactionHash = receipt.signature;
+    cycle.breachTransactionLink = receipt.explorerUrl;
+    cycle.procurementAddress = cycle.procurementAddress ?? receipt.procurementAddress;
+    this.addEvent("warning", "SLA breach recorded on Solana", `Registry transaction confirmed: ${shortHash(receipt.signature)}`);
+  }
 }
 
 function verifyResult(output: unknown, latencyMs: number, maxLatencyMs: number) {
@@ -490,6 +533,13 @@ function migrateState(state: AppState, mode: ExecutionAdapter["mode"]): AppState
     directProof: state.directProof ?? initial.directProof,
   };
   migrated.metrics = { ...migrated.metrics, savings: migrated.metrics.savings ?? 0 };
+  migrated.cycles = migrated.cycles.map((cycle) => ({
+    ...cycle,
+    procurementId: cycle.procurementId ?? null,
+    procurementAddress: cycle.procurementAddress ?? null,
+    breachTransactionHash: cycle.breachTransactionHash ?? null,
+    breachTransactionLink: cycle.breachTransactionLink ?? null,
+  }));
   migrated.events = migrated.events.map((event) => event.title === "Payment attempt failed" && event.detail.includes("Command failed:")
     ? { ...event, detail: "The payment quote was no longer available. No purchase was recorded." }
     : event);
