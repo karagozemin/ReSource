@@ -8,5 +8,8 @@ data/*.tmp
 *.log
 *.tsbuildinfo
 render-wallet.b64
+target/
+test-ledger/
+.anchor/
 vite.config.js
 vite.config.d.ts

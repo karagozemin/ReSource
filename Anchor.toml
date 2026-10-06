@@ -1,0 +1,22 @@
+skip_local_validator = true
+
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+resource_registry = "G3sta1z39YXTX5dopAXtuv6kqBTQGoN9G85DMW3WVvm4"
+
+[programs.devnet]
+resource_registry = "G3sta1z39YXTX5dopAXtuv6kqBTQGoN9G85DMW3WVvm4"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test -p resource-registry"
+
+[hooks]
