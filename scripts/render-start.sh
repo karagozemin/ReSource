@@ -28,7 +28,6 @@ if [ "${EXECUTION_MODE:-demo}" = "solana" ]; then
     echo "Add the dedicated devnet runtime keypair as a Secret File, then redeploy." >&2
     exit 1
   fi
-  chmod 600 "$solana_keypair"
 fi
 
 exec npm start
