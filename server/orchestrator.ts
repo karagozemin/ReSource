@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { applyProviderFailure, rankProviders } from "../src/lib/procurement";
-import type { AppState, ProcurementCycle, StandingOrderUpdate, TimelineEvent } from "../src/types";
+import type { AppState, PaymentProtocol, ProcurementCycle, StandingOrderUpdate, TimelineEvent } from "../src/types";
 import type { ExecutionAdapter } from "./adapters";
 import type { KeeperHubDirectExecutionClient } from "./direct-execution";
 import { createInitialState } from "./fixtures";
 import { PaymentQuoteExpiredError } from "./marketplace";
 import type { MarketplaceClient } from "./marketplace";
 import type { StateStore } from "./store";
+
+type ProcurementRunResult = {
+  state: AppState;
+  cycle: ProcurementCycle;
+  replayed: boolean;
+};
 
 export class ProcurementOrchestrator {
   private state!: AppState;
@@ -81,14 +87,7 @@ export class ProcurementOrchestrator {
       this.state.providers = this.state.providers.map((provider) => provider.id === selected.id ? applyProviderFailure(provider) : provider);
       this.addEvent("warning", "Provider automatically suspended", "Observed performance breached policy. Re-procurement started.");
       await this.store.save(this.state);
-      const result = await this.runInternal(`recovery-${randomUUID()}`);
-      if (!result.replayed && result.cycle.status === "completed" && !this.marketplace) {
-        this.state.metrics.recoveries += 1;
-        this.addEvent("success", "Recovery verified", "Replacement provider satisfied the Standing Order without operator approval.");
-        await this.store.save(this.state);
-        return { ...result, state: this.snapshot() };
-      }
-      return result;
+      return this.runInternal(`recovery-${randomUUID()}`);
     });
   }
 
@@ -156,7 +155,7 @@ export class ProcurementOrchestrator {
     return next;
   }
 
-  private async runInternal(idempotencyKey: string, pendingPaymentMaxAgeMs?: number) {
+  private async runInternal(idempotencyKey: string, pendingPaymentMaxAgeMs?: number): Promise<ProcurementRunResult> {
     const existing = this.state.cycles.find((cycle) => cycle.idempotencyKey === idempotencyKey);
     if (existing) return { state: this.snapshot(), cycle: existing, replayed: true };
     if (this.state.pendingPayment && pendingPaymentMaxAgeMs !== undefined && isOlderThan(this.state.pendingPayment.createdAt, pendingPaymentMaxAgeMs)) {
@@ -224,33 +223,79 @@ export class ProcurementOrchestrator {
       await this.store.save(this.state);
       return { state: this.snapshot(), cycle, replayed: false };
     }
+    const provisionalCycle = this.adapter.mode === "solana"
+      ? makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "settling", 0, null, null, null)
+      : null;
+    if (provisionalCycle) {
+      this.state.cycles.unshift(provisionalCycle);
+      await this.store.save(this.state);
+    }
     let result;
     try {
       result = await this.adapter.execute(winner.provider, this.state.order);
     } catch (error) {
+      if (provisionalCycle) {
+        provisionalCycle.status = "failed";
+        provisionalCycle.error = String(error);
+        provisionalCycle.completedAt = new Date().toISOString();
+        this.state.mode = "ready";
+        this.addEvent("error", "Solana settlement failed", provisionalCycle.error);
+        await this.store.save(this.state);
+        return { state: this.snapshot(), cycle: provisionalCycle, replayed: false };
+      }
       return this.finishFailure(cycleId, idempotencyKey, winner.provider.id, String(error));
     }
-    if (!result.success || !verifyResult(result.output, result.latencyMs, this.state.order.maxLatencyMs)) {
-      return this.finishFailure(cycleId, idempotencyKey, winner.provider.id, result.error ?? "Result verification failed", result.executionId);
+    const isSimulatedPurchase = this.adapter.mode === "demo";
+    const isPaidPurchase = result.paid === true;
+    const purchaseAmount = isPaidPurchase ? result.amount ?? winner.provider.price : isSimulatedPurchase ? winner.provider.price : 0;
+    const verified = result.success && verifyResult(result.output, result.latencyMs, this.state.order.maxLatencyMs);
+    if (isPaidPurchase || (isSimulatedPurchase && verified)) {
+      this.state.metrics.purchases += 1;
+      this.state.metrics.spend += purchaseAmount;
+    }
+    const cycle = provisionalCycle ?? makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, verified ? "completed" : "failed", 0, null, null, null);
+    Object.assign(cycle, {
+      status: verified ? "completed" : "failed",
+      amount: isPaidPurchase || verified ? purchaseAmount : 0,
+      executionId: result.executionId,
+      transactionHash: result.transactionHash,
+      transactionLink: result.transactionLink ?? null,
+      paymentProtocol: result.paymentProtocol ?? null,
+      error: verified ? null : result.error ?? "Result verification failed",
+      completedAt: new Date().toISOString(),
+    });
+    if (!provisionalCycle) this.state.cycles.unshift(cycle);
+    if (!verified) {
+      this.state.mode = this.adapter.mode === "solana" ? "recovering" : "ready";
+      this.addEvent("error", "Provider execution failed", cycle.error ?? "Result verification failed");
+      if (this.adapter.mode === "solana") {
+        this.state.providers = this.state.providers.map((provider) => provider.id === winner.provider.id ? applyProviderFailure(provider) : provider);
+        this.addEvent("warning", "Provider automatically suspended", "Paid provider breached policy. Solana re-procurement started.");
+      }
+      await this.store.save(this.state);
+      if (this.adapter.mode === "solana" && this.state.order.automaticFailover) {
+        return this.runInternal(`recovery-${cycle.id}`);
+      }
+      return { state: this.snapshot(), cycle, replayed: false };
     }
 
     this.addEvent("success", "Result verified", "Provider response schema and SLA checks passed.");
-    const isSimulatedPurchase = this.adapter.mode === "demo";
     this.addEvent(
       "success",
-      this.adapter.mode === "keeperhub" ? "KeeperHub workflow complete" : "Demo execution complete",
+      this.adapter.mode === "keeperhub" ? "KeeperHub workflow complete" : this.adapter.mode === "solana" ? "Solana settlement confirmed" : "Demo execution complete",
       result.transactionHash
-        ? `Onchain write confirmed: ${shortHash(result.transactionHash)}`
+        ? `Onchain transaction confirmed: ${shortHash(result.transactionHash)}`
         : this.adapter.mode === "keeperhub"
           ? "Organization workflow succeeded. No payment or onchain transaction was recorded."
           : "Demo adapter confirmed the simulated lifecycle. No payment or transaction sent.",
     );
-    if (isSimulatedPurchase) this.state.metrics.purchases += 1;
     this.state.metrics.executions += 1;
-    if (isSimulatedPurchase) this.state.metrics.spend += winner.provider.price;
+    if (idempotencyKey.startsWith("recovery-")) {
+      this.state.metrics.recoveries += 1;
+      this.addEvent("success", "Recovery verified", "Replacement provider satisfied the Standing Order without operator approval.");
+    }
+    this.state.providers = this.state.providers.map((provider) => provider.id === winner.provider.id ? updateProviderSuccess(provider, result.latencyMs) : provider);
     this.state.mode = "healthy";
-    const cycle = makeCycle(cycleId, idempotencyKey, this.state.order.id, winner.provider.id, "completed", isSimulatedPurchase ? winner.provider.price : 0, result.executionId, result.transactionHash, null);
-    this.state.cycles.unshift(cycle);
     await this.store.save(this.state);
     return { state: this.snapshot(), cycle, replayed: false };
   }
@@ -409,9 +454,9 @@ function unwrapOutput(output: unknown): unknown {
   return entries.length === 1 ? unwrapOutput(entries[0]) : output;
 }
 
-function makeCycle(id: string, idempotencyKey: string, standingOrderId: string, selectedProviderId: string | null, status: ProcurementCycle["status"], amount: number, executionId: string | null, transactionHash: string | null, error: string | null): ProcurementCycle {
+function makeCycle(id: string, idempotencyKey: string, standingOrderId: string, selectedProviderId: string | null, status: ProcurementCycle["status"], amount: number, executionId: string | null, transactionHash: string | null, error: string | null, paymentProtocol: PaymentProtocol = null, transactionLink: string | null = null): ProcurementCycle {
   const timestamp = new Date().toISOString();
-  return { id, idempotencyKey, standingOrderId, startedAt: timestamp, completedAt: timestamp, selectedProviderId, status, amount, executionId, transactionHash, error };
+  return { id, idempotencyKey, standingOrderId, startedAt: timestamp, completedAt: timestamp, selectedProviderId, status, amount, paymentProtocol, executionId, transactionHash, transactionLink, error };
 }
 
 function shortHash(hash: string) { return `${hash.slice(0, 8)}…${hash.slice(-6)}`; }

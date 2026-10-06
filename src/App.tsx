@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { initialEvents, initialMetrics, initialProviders, standingOrder as initialOrder } from "./data/demo";
 import { rankProviders } from "./lib/procurement";
-import type { AppState, DirectProof, PendingPayment, RuntimeInfo, StandingOrderUpdate } from "./types";
+import type { AppState, DirectProof, ExecutionMode, PendingPayment, RuntimeInfo, StandingOrderUpdate } from "./types";
 import type { ProcurementCycle } from "./types";
 import { ExecutionsView, OrdersView, ProvidersView, SettingsView } from "./WorkspaceViews";
 
@@ -48,22 +48,19 @@ type OperationFlow = {
   resultLinkLabel: string | null;
 };
 
-const flowPhases: Record<FlowKind, string[]> = {
-  procurement: [
-    "Connect to KeeperHub Marketplace",
-    "Discover available service providers",
-    "Evaluate price, reliability, and latency",
-    "Apply Standing Order policy guard",
-    "Secure x402 payment quote",
-  ],
-  payment: [
-    "Revalidate network, amount, and recipient",
-    "Verify sponsored wallet session",
-    "Sign payment authorization",
-    "Submit settlement on Base",
-    "Await provider execution",
-    "Verify response schema and SLA",
-  ],
+const flowPhases: Record<ExecutionMode, Record<FlowKind, string[]>> = {
+  demo: {
+    procurement: ["Load provider fixtures", "Evaluate price, reliability, and latency", "Apply Standing Order policy guard", "Execute simulated provider", "Verify response schema and SLA"],
+    payment: ["Prepare simulated payment", "Verify simulated result"],
+  },
+  keeperhub: {
+    procurement: ["Connect to KeeperHub Marketplace", "Discover available service providers", "Evaluate price, reliability, and latency", "Apply Standing Order policy guard", "Secure x402 payment quote"],
+    payment: ["Revalidate network, amount, and recipient", "Verify sponsored wallet session", "Sign payment authorization", "Submit settlement on Base", "Await provider execution", "Verify response schema and SLA"],
+  },
+  solana: {
+    procurement: ["Evaluate available providers", "Apply Standing Order policy guard", "Sign SPL token payment", "Confirm settlement on Solana", "Call paid provider", "Verify response schema and SLA"],
+    payment: ["Validate Solana recipient and amount", "Sign SPL token payment", "Confirm transaction", "Verify provider result"],
+  },
 };
 
 const viewTitles: Record<ViewId, { eyebrow: string; title: string }> = {
@@ -94,7 +91,7 @@ function App() {
   const [order, setOrder] = useState(initialOrder);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<AppState["mode"]>("ready");
-  const [executionMode, setExecutionMode] = useState<"demo" | "keeperhub">("demo");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("demo");
   const [integrationReady, setIntegrationReady] = useState(true);
   const [pending, setPending] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -170,7 +167,7 @@ function App() {
     setOperationFlow({ kind, phase: 0, status: "running", resultTitle: null, resultDetail: null, resultUrl: null, resultLinkLabel: null });
     operationFlowTimer.current = window.setInterval(() => {
       setOperationFlow((current) => current && current.status === "running"
-        ? { ...current, phase: Math.min(current.phase + 1, flowPhases[current.kind].length - 2) }
+        ? { ...current, phase: Math.min(current.phase + 1, flowPhases[executionMode][current.kind].length - 2) }
         : current);
     }, kind === "payment" ? 1050 : 850);
   }
@@ -185,7 +182,7 @@ function App() {
     stopOperationFlowTimer();
     setOperationFlow((current) => current ? {
       ...current,
-      phase: status === "success" ? flowPhases[current.kind].length - 1 : current.phase,
+      phase: status === "success" ? flowPhases[executionMode][current.kind].length - 1 : current.phase,
       status,
       resultTitle,
       resultDetail,
@@ -396,7 +393,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      {operationFlow && <OperationExperience flow={operationFlow} providerCount={providers.length} payment={pendingPayment} onClose={() => setOperationFlow(null)} />}
+      {operationFlow && <OperationExperience flow={operationFlow} executionMode={executionMode} providerCount={providers.length} payment={pendingPayment} onClose={() => setOperationFlow(null)} />}
       {(operation || notice) && <div className={`operation-toast ${operation ? "working" : "success"}`} role="status"><span className="toast-icon">{operation ? <RefreshCw size={17} /> : <Check size={17} />}</span><span><strong>{operation ?? notice}</strong><small>{operation ? "ReSource is executing this operation" : "Operation completed successfully"}</small></span>{operation && <span className="toast-progress" />}</div>}
       {operatorDialogOpen && <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOperatorDialogOpen(false); }}><form className="operator-dialog" onSubmit={(event) => { event.preventDefault(); saveOperatorKey(); }}><div className="operator-dialog-icon"><LockKeyhole size={20} /></div><div><div className="eyebrow">Protected runtime</div><h2>Unlock operator controls</h2><p>Enter the Render operator key for this browser session.</p></div><label><span>Operator key</span><input autoFocus type="password" autoComplete="off" value={operatorKeyInput} onChange={(event) => setOperatorKeyInput(event.target.value)} /></label><div className="operator-dialog-actions">{operatorUnlocked && <button type="button" className="secondary-button" onClick={lockOperatorSession}>Lock session</button>}<button type="button" className="secondary-button" onClick={() => setOperatorDialogOpen(false)}>Cancel</button><button type="submit" className="primary-button fit" disabled={!operatorKeyInput.trim()}>Unlock</button></div></form></div>}
       <aside className="sidebar">
@@ -412,7 +409,7 @@ function App() {
           <button className={`nav-item ${activeView === "settings" ? "active" : ""}`} onClick={() => navigate("settings")} title="Settings"><Settings2 size={18} /><span>Settings</span></button>
         </nav>
         <div className="sidebar-foot">
-          <div className="network-line"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo adapter" : "KeeperHub adapter"}</div>
+          <div className="network-line"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo adapter" : executionMode === "solana" ? "Solana adapter" : "KeeperHub adapter"}</div>
           <div className="network-meta">{executionMode === "demo" ? "No funds at risk" : integrationReady ? "Credentials loaded" : "Configuration required"}</div>
           <button className="back-to-site" onClick={() => setExperience("landing")}><ArrowRight size={13} /> Back to site</button>
         </div>
@@ -430,7 +427,7 @@ function App() {
               ? <div className="operator-button unlocked sponsored-status"><Sparkles size={14} />Sponsored live</div>
               : <button className={`operator-button ${operatorUnlocked ? "unlocked" : ""}`} onClick={() => setOperatorDialogOpen(true)}><LockKeyhole size={14} />{operatorUnlocked ? "Operator" : "Unlock"}</button>}
             {executionMode === "demo" && <button className="icon-button" onClick={resetDemo} title="Reset demo" aria-label="Reset demo"><RotateCcw size={17} /></button>}
-            <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : "KeeperHub"} <ChevronDown size={14} /></div>
+            <div className="adapter-pill"><span className={`status-dot ${integrationReady ? "" : "offline"}`} /> {executionMode === "demo" ? "Demo mode" : executionMode === "solana" ? "Solana" : "KeeperHub"} <ChevronDown size={14} /></div>
           </div>
         </header>
 
@@ -457,7 +454,7 @@ function App() {
         <section className="metrics-grid" aria-label="Key metrics">
           <Metric icon={<RefreshCw />} label="Cycles" value={metrics.cycles.toString()} note="procurement runs" />
           <Metric icon={<Bot />} label="Evaluations" value={metrics.evaluations.toString()} note="provider decisions" />
-          <Metric icon={<CheckCircle2 />} label="Purchases" value={metrics.purchases.toString()} note="verified results" />
+          <Metric icon={<CheckCircle2 />} label="Purchases" value={metrics.purchases.toString()} note="settled purchases" />
           <Metric icon={<TriangleAlert />} label="Failures" value={cycles.filter((cycle) => ["failed", "policy_blocked", "no_provider"].includes(cycle.status)).length.toString()} note="failed closed" />
           <Metric icon={<HeartPulse />} label="Recoveries" value={metrics.recoveries.toString()} note="automatic failovers" accent />
           <Metric icon={<Zap />} label="Executions" value={metrics.executions.toString()} note="verified workflows" />
@@ -491,13 +488,13 @@ function App() {
           <section className="action-panel" aria-labelledby="action-title">
             <div>
               <div className="eyebrow">{executionMode === "demo" ? "Demo control" : "Live buyer"}</div>
-              <h2 id="action-title">{executionMode === "demo" ? "Prove the recovery loop" : "Marketplace procurement"}</h2>
-              <p>{executionMode === "demo" ? "Run a policy-driven purchase, then degrade the selected provider and watch ReSource recover." : "Discover competing KeeperHub services, enforce policy, authorize x402, and verify the paid result."}</p>
+              <h2 id="action-title">{executionMode === "demo" ? "Prove the recovery loop" : executionMode === "solana" ? "Autonomous Solana procurement" : "Marketplace procurement"}</h2>
+              <p>{executionMode === "demo" ? "Run a policy-driven purchase, then degrade the selected provider and watch ReSource recover." : executionMode === "solana" ? "Select a provider, settle on Solana, and automatically pay a replacement after an SLA breach." : "Discover competing KeeperHub services, enforce policy, authorize x402, and verify the paid result."}</p>
             </div>
             <div className="demo-steps">
               <Step number="01" label={executionMode === "demo" ? "Run procurement" : "Discover and select"} done={metrics.cycles > 0} />
-              <Step number="02" label={executionMode === "demo" ? "Inject timeout" : "Authorize x402 payment"} done={executionMode === "demo" ? providers.find((provider) => provider.id === "sentinel")?.state === "ineligible" : metrics.purchases > 0} />
-              <Step number="03" label={executionMode === "demo" ? "Verify recovery" : "Verify provider result"} done={executionMode === "demo" ? metrics.recoveries > 0 : cycles.some((cycle) => cycle.status === "completed" && cycle.paymentProtocol === "x402")} />
+              <Step number="02" label={executionMode === "demo" ? "Inject timeout" : executionMode === "solana" ? "Settle SPL payment" : "Authorize x402 payment"} done={executionMode === "demo" ? providers.find((provider) => provider.id === "sentinel")?.state === "ineligible" : metrics.purchases > 0} />
+              <Step number="03" label={executionMode === "demo" ? "Verify recovery" : executionMode === "solana" ? "Pay replacement" : "Verify provider result"} done={executionMode === "demo" ? metrics.recoveries > 0 : cycles.some((cycle) => cycle.status === "completed" && cycle.paymentProtocol === (executionMode === "solana" ? "spl" : "x402"))} />
             </div>
             {pendingPayment && (
               <div className="payment-authorization">
@@ -518,7 +515,7 @@ function App() {
                   <button className="primary-button" onClick={confirmPayment} disabled={busy}><WalletCards size={17} />{busy ? "Payment running" : `Authorize ${pendingPayment.amount.toFixed(2)} ${pendingPayment.token}`}</button>
                   {executionMode === "keeperhub" && !sponsoredDemo && <button className="icon-button in-panel" onClick={injectFailure} disabled={busy} title="Simulate provider SLA breach" aria-label="Simulate provider SLA breach"><TriangleAlert size={17} /></button>}
                 </>
-              ) : selectedId === "sentinel" && executionMode === "demo" ? (
+              ) : selectedId === "sentinel" && (executionMode === "demo" || executionMode === "solana") ? (
                 <button className="danger-button" onClick={injectFailure} disabled={busy}><TriangleAlert size={17} />Inject provider failure</button>
               ) : (
                 <button className="primary-button" onClick={runCycle} disabled={busy || isPaused}><Play size={17} />{busy ? "Cycle running" : selectedId === "atlas" ? "Run another cycle" : "Run procurement cycle"}</button>
@@ -651,13 +648,14 @@ function Landing({ entering, onEnter }: { entering: boolean; onEnter: () => void
   );
 }
 
-function OperationExperience({ flow, providerCount, payment, onClose }: {
+function OperationExperience({ flow, executionMode, providerCount, payment, onClose }: {
   flow: OperationFlow;
+  executionMode: ExecutionMode;
   providerCount: number;
   payment: PendingPayment | null;
   onClose: () => void;
 }) {
-  const phases = flowPhases[flow.kind];
+  const phases = flowPhases[executionMode][flow.kind];
   const completed = flow.status === "success" ? phases.length : flow.phase;
   const progress = flow.status === "success" ? 100 : Math.max(8, ((flow.phase + .45) / phases.length) * 100);
   const isRunning = flow.status === "running";
@@ -669,10 +667,10 @@ function OperationExperience({ flow, providerCount, payment, onClose }: {
         <header className="execution-head">
           <div>
             <span className="execution-live"><i />{isRunning ? "Live execution" : flow.status}</span>
-            <h2 id="execution-title">{isPayment ? "Settling x402 purchase" : "Sourcing the provider market"}</h2>
+            <h2 id="execution-title">{isPayment ? "Settling x402 purchase" : executionMode === "solana" ? "Running autonomous Solana procurement" : "Sourcing the provider market"}</h2>
           </div>
           <div className="execution-head-meta">
-            <span>{isPayment ? payment?.chainName ?? "Base" : "KeeperHub"}</span>
+            <span>{isPayment ? payment?.chainName ?? "Base" : executionMode === "solana" ? "Solana" : executionMode === "demo" ? "Local demo" : "KeeperHub"}</span>
             <strong>{isPayment ? "OKX Agent Payments Protocol" : `${providerCount} providers`}</strong>
           </div>
         </header>
@@ -686,8 +684,8 @@ function OperationExperience({ flow, providerCount, payment, onClose }: {
             <div className="execution-beam beam-two"><i /></div>
             <div className="execution-beam beam-three"><i /></div>
             <span className="execution-node node-one">{isPayment ? "WALLET" : "ATLAS"}</span>
-            <span className="execution-node node-two">{isPayment ? "BASE" : "SENTINEL"}</span>
-            <span className="execution-node node-three">{isPayment ? "x402" : "POLICY"}</span>
+            <span className="execution-node node-two">{isPayment ? "BASE" : executionMode === "solana" ? "SOLANA" : "SENTINEL"}</span>
+            <span className="execution-node node-three">{isPayment ? "x402" : executionMode === "solana" ? "SPL" : "POLICY"}</span>
             <div className="execution-core">
               <span className="execution-core-ring" />
               {isPayment ? <WalletCards size={32} /> : <img src="/brand/resource-mark-192.png" alt="" />}

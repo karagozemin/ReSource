@@ -12,7 +12,7 @@ KeeperHub supplies the Marketplace, paid workflow and onchain execution boundari
 
 **[How it works](#procurement-loop) · [KeeperHub integration](#keeperhub-integration) · [Live proof](#live-execution-proof) · [Run locally](#run-locally) · [Full architecture](docs/ARCHITECTURE.md)**
 
-> Current scope: one transaction-risk Standing Order, two live KeeperHub Marketplace listings, x402 settlement on Base, and a direct KeeperHub execution proof on Base Sepolia. The repository also includes a no-funds demo mode.
+> Current scope: the existing KeeperHub/Base path remains available, while `EXECUTION_MODE=solana` adds the first migration phase: confirmed SPL settlement, provider HTTP execution, automatic paid failover and Solana Explorer evidence. The onchain procurement registry is the next phase.
 
 ## Live execution proof
 
@@ -200,6 +200,7 @@ This is a single npm package, not a monorepo. It contains no smart contracts or 
 - Node.js 24 and npm. Render is pinned to Node `24.15.0`.
 - For demo mode: no wallet, API key or funds.
 - For KeeperHub mode: a KeeperHub API key, buyer address, access to the configured Marketplace listings and `onchainos` CLI with a usable Agentic Wallet account.
+- For Solana mode: a dedicated low-balance service keypair, an SPL mint, a private RPC endpoint and two provider endpoint/payment-address pairs.
 
 ### Demo mode
 
@@ -248,11 +249,30 @@ SCHEDULER_ENABLED=true npm run dev
 
 Each interval bucket produces a stable key such as `schedule:SO-001:<bucket>`. Repeated polls and restarts replay the persisted cycle instead of creating another purchase. In KeeperHub mode the scheduler stops at payment authorization.
 
+### Solana mode
+
+Solana mode performs the payment without a browser confirmation so a failed paid provider can be replaced autonomously. Use a dedicated service keypair funded only for the demo, never a personal wallet.
+
+```text
+EXECUTION_MODE=solana
+SOLANA_CLUSTER=devnet
+SOLANA_RPC_URL=https://<private-rpc-endpoint>
+SOLANA_KEYPAIR_PATH=/absolute/path/to/solana-keypair.json
+SOLANA_TOKEN_MINT=<spl-mint>
+SOLANA_TOKEN_DECIMALS=6
+RESOURCE_PROVIDER_SENTINEL_URL=https://<provider-a>/risk
+RESOURCE_PROVIDER_SENTINEL_SOLANA_ADDRESS=<provider-a-wallet>
+RESOURCE_PROVIDER_ATLAS_URL=https://<provider-b>/risk
+RESOURCE_PROVIDER_ATLAS_SOLANA_ADDRESS=<provider-b-wallet>
+```
+
+The first cycle pays Sentinel and records the confirmed signature. Controlled failure suspends Sentinel, selects Atlas, sends the second payment and preserves both Explorer links. See [`docs/SOLANA_MIGRATION.md`](docs/SOLANA_MIGRATION.md) for the implemented boundary and remaining onchain registry work.
+
 ## Environment variables
 
 | Variable | Required | Default / role |
 | --- | --- | --- |
-| `EXECUTION_MODE` | No | `demo`; use `keeperhub` for live integrations. Any other value resolves to demo. |
+| `EXECUTION_MODE` | No | `demo`; supported live modes are `keeperhub` and `solana`. Any other value resolves to demo. |
 | `PORT` | No | API port, default `8787`. |
 | `HOST` | No | API bind host, default `0.0.0.0`. |
 | `FRONTEND_ORIGIN` | Production | Comma-separated CORS allowlist. CORS is registered only when this is non-empty. |
@@ -271,6 +291,15 @@ Each interval bucket produces a stable key such as `schedule:SO-001:<bucket>`. R
 | `KEEPERHUB_WORKFLOW_ATLAS` | Organization adapter only | Atlas organization workflow ID. |
 | `KEEPERHUB_WORKFLOW_SENTINEL` | Organization adapter only | Sentinel organization workflow ID. |
 | `KEEPERHUB_WORKFLOW_VERIDIAN` | Organization adapter only | Veridian organization workflow ID. |
+| `SOLANA_CLUSTER` | Solana mode | `devnet` by default; `mainnet-beta` is also supported. |
+| `SOLANA_RPC_URL` | Solana mode | HTTP RPC endpoint used for planning, submission and confirmation. |
+| `SOLANA_RPC_SUBSCRIPTIONS_URL` | No | WebSocket endpoint; derived from the HTTP RPC URL when omitted. |
+| `SOLANA_KEYPAIR_PATH` | Solana mode | Backend-only JSON keypair file for the dedicated ReSource service wallet. |
+| `SOLANA_TOKEN_MINT` | Solana mode | Exact SPL token mint to settle. |
+| `SOLANA_TOKEN_SYMBOL` | No | Display symbol, default `USDC`. |
+| `SOLANA_TOKEN_DECIMALS` | No | Mint decimals, default `6`; checked by the Token Program transfer. |
+| `RESOURCE_PROVIDER_*_URL` | Solana mode | Sentinel and Atlas HTTP service endpoints. |
+| `RESOURCE_PROVIDER_*_SOLANA_ADDRESS` | Solana mode | Sentinel and Atlas recipient wallet addresses. |
 
 Keep secrets in the backend `.env`; `.env` is ignored by Git. Never prefix KeeperHub credentials with `VITE_`.
 
@@ -305,9 +334,9 @@ Live evidence is written to `data/runtime.json`. The file is intentionally ignor
 - Hard policy checks run before selection, and budget/order checks run again immediately before payment.
 - A quote that differs from the selected listing price is blocked. An expired quote requires a fresh explicit authorization; changed terms are blocked.
 - State-changing orchestrator operations are serialized in-process, and cycle idempotency keys are persisted.
-- Purchases and spend increase only from a successful x402 settlement receipt in live mode.
+- Purchases and spend increase only from successful x402 or confirmed SPL settlement evidence in live modes.
 - Provider output must contain a valid `riskLevel`, a numeric `riskScore` from 0 to 100 and a `factors` array, and must arrive within the Standing Order SLA.
-- Provider failure immediately suspends that provider. Automatic failover never bypasses payment authorization.
+- Provider failure immediately suspends that provider. KeeperHub replacement payments retain explicit authorization; Solana mode uses a dedicated capped service wallet for autonomous replacement.
 - Direct execution requires simulation before the separate broadcast action and uses a unique KeeperHub idempotency key.
 - Wallet command errors are reduced to stable messages before persistence; backend secrets are not returned in application state.
 - Administrative production POST/PATCH endpoints require a timing-safe operator-key check. When the sponsored live demo is enabled, only procurement run and explicit payment confirmation are public. There is no separate sponsor spend cap; Standing Order price and accumulated-budget checks still run immediately before payment, and the runtime wallet should contain only the funds intended for public use.

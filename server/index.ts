@@ -6,11 +6,20 @@ import { KeeperHubDirectExecutionClient } from "./direct-execution";
 import { KeeperHubMarketplaceClient } from "./marketplace";
 import { ProcurementOrchestrator } from "./orchestrator";
 import { TriggerEngine } from "./scheduler";
+import { SolanaExecutionAdapter } from "./solana";
 import { JsonStateStore } from "./store";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const mode = process.env.EXECUTION_MODE === "keeperhub" ? "keeperhub" : "demo";
-const adapter = mode === "keeperhub" ? new KeeperHubExecutionAdapter() : new DemoExecutionAdapter();
+const mode = process.env.EXECUTION_MODE === "keeperhub"
+  ? "keeperhub"
+  : process.env.EXECUTION_MODE === "solana"
+    ? "solana"
+    : "demo";
+const adapter = mode === "keeperhub"
+  ? new KeeperHubExecutionAdapter()
+  : mode === "solana"
+    ? new SolanaExecutionAdapter()
+    : new DemoExecutionAdapter();
 const marketplace = mode === "keeperhub" ? new KeeperHubMarketplaceClient() : undefined;
 const directExecution = mode === "keeperhub" ? new KeeperHubDirectExecutionClient() : undefined;
 const dataDirectory = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(root, "data");

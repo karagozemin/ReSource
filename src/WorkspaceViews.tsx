@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Activity, Bot, CheckCircle2, CircleDollarSign, Clock3, ExternalLink, Gauge, Pause, Play, RefreshCw, Save, ShieldCheck } from "lucide-react";
-import type { DirectProof, ProcurementCycle, Provider, ProviderDecision, RuntimeInfo, StandingOrder, StandingOrderUpdate } from "./types";
+import type { DirectProof, ExecutionMode, ProcurementCycle, Provider, ProviderDecision, RuntimeInfo, StandingOrder, StandingOrderUpdate } from "./types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -120,7 +120,7 @@ export function ExecutionsView({ cycles, providers, directProof }: { cycles: Pro
           <Detail label="Protocol" value={selected.paymentProtocol ?? "Workflow execution"} />
           <Detail label="Amount" value={selected.amount ? `${selected.amount.toFixed(2)} USDC` : "0 USDC"} />
           <Detail label="Execution" value={selected.executionId ? shortId(selected.executionId) : "Not recorded"} />
-          {selected.transactionHash && <div><dt>Transaction</dt><dd><a href={`https://basescan.org/tx/${selected.transactionHash}`} target="_blank" rel="noreferrer">{shortId(selected.transactionHash)} <ExternalLink size={12} /></a></dd></div>}
+          {selected.transactionHash && <div><dt>Transaction</dt><dd><a href={selected.transactionLink ?? `https://basescan.org/tx/${selected.transactionHash}`} target="_blank" rel="noreferrer">{shortId(selected.transactionHash)} <ExternalLink size={12} /></a></dd></div>}
           {selected.error && <div className="detail-error"><dt>Error</dt><dd>{selected.error}</dd></div>}
         </dl> : <div className="empty-state">No cycle selected.</div>}
         <div className="proof-summary"><span>Direct proof · {directProof.network}</span><strong>{directProof.status}</strong>{directProof.transactionLink && <a href={directProof.transactionLink} target="_blank" rel="noreferrer">View proof <ExternalLink size={12} /></a>}</div>
@@ -131,7 +131,7 @@ export function ExecutionsView({ cycles, providers, directProof }: { cycles: Pro
 
 export function SettingsView({ runtime, executionMode, integrationReady, busy, sponsoredDemo, onSchedulerChange, onRefresh }: {
   runtime: RuntimeInfo;
-  executionMode: "demo" | "keeperhub";
+  executionMode: ExecutionMode;
   integrationReady: boolean;
   busy: boolean;
   sponsoredDemo: boolean;
@@ -148,8 +148,8 @@ export function SettingsView({ runtime, executionMode, integrationReady, busy, s
       </section>
       <section className="workspace-panel settings-panel">
         <div className="section-heading compact"><div><div className="eyebrow">Integration</div><h2>Execution adapter</h2></div><button className="icon-button" onClick={() => void onRefresh()} disabled={busy} title="Refresh health" aria-label="Refresh health"><RefreshCw size={16} /></button></div>
-        <div className="integration-state"><span className={`integration-icon ${integrationReady ? "ready" : "offline"}`}><Bot size={20} /></span><span><strong>{executionMode === "keeperhub" ? "KeeperHub" : "Demo adapter"}</strong><small>{integrationReady ? "Connected and ready" : "Configuration required"}</small></span><span className={`state-badge ${integrationReady ? "active" : "paused"}`}><span />{integrationReady ? "Healthy" : "Offline"}</span></div>
-        <dl className="detail-list compact-list"><Detail label="Procurement protocol" value={executionMode === "keeperhub" ? "x402 / USDC" : "Simulated"} /><Detail label="Settlement network" value={executionMode === "keeperhub" ? "Base" : "None"} /><Detail label="Direct proof network" value={executionMode === "keeperhub" ? "Base Sepolia" : "None"} /></dl>
+        <div className="integration-state"><span className={`integration-icon ${integrationReady ? "ready" : "offline"}`}><Bot size={20} /></span><span><strong>{executionMode === "keeperhub" ? "KeeperHub" : executionMode === "solana" ? "Solana adapter" : "Demo adapter"}</strong><small>{integrationReady ? "Connected and ready" : "Configuration required"}</small></span><span className={`state-badge ${integrationReady ? "active" : "paused"}`}><span />{integrationReady ? "Healthy" : "Offline"}</span></div>
+        <dl className="detail-list compact-list"><Detail label="Procurement protocol" value={executionMode === "keeperhub" ? "x402 / USDC" : executionMode === "solana" ? "SPL / USDC" : "Simulated"} /><Detail label="Settlement network" value={executionMode === "keeperhub" ? "Base" : executionMode === "solana" ? "Solana" : "None"} /><Detail label="Direct proof network" value={executionMode === "keeperhub" ? "Base Sepolia" : executionMode === "solana" ? "Solana Explorer" : "None"} /></dl>
       </section>
     </div>
   );

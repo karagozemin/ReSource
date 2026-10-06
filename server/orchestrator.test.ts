@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoExecutionAdapter } from "./adapters";
 import type { ExecutionAdapter } from "./adapters";
 import type { MarketplaceClient } from "./marketplace";
@@ -213,6 +213,84 @@ describe("ProcurementOrchestrator", () => {
     expect(result.state.pendingPayment).toMatchObject({ providerId: "atlas", amount: 0.05 });
     expect(result.state.providers.find((provider) => provider.id === "sentinel")?.state).toBe("ineligible");
     expect(result.state.metrics.spend).toBe(0);
+  });
+
+  it("records Solana settlement and automatically pays the replacement", async () => {
+    const solanaAdapter: ExecutionAdapter = {
+      mode: "solana",
+      isReady: () => true,
+      execute: async (provider) => ({
+        executionId: `solana-${provider.id}`,
+        success: true,
+        latencyMs: 500,
+        output: { riskLevel: "low", riskScore: 12, factors: [] },
+        transactionHash: `signature-${provider.id}`,
+        transactionLink: `https://explorer.solana.com/tx/signature-${provider.id}?cluster=devnet`,
+        error: null,
+        paid: true,
+        amount: provider.price,
+        paymentProtocol: "spl",
+      }),
+    };
+    const buyer = new ProcurementOrchestrator(new MemoryStateStore(), solanaAdapter);
+    await buyer.initialize();
+
+    const first = await buyer.run("solana-initial");
+    expect(first.cycle).toMatchObject({
+      status: "completed",
+      amount: 0.03,
+      paymentProtocol: "spl",
+      transactionHash: "signature-sentinel",
+    });
+
+    const recovery = await buyer.injectFailure();
+    expect(recovery.cycle).toMatchObject({
+      status: "completed",
+      amount: 0.05,
+      paymentProtocol: "spl",
+      transactionHash: "signature-atlas",
+    });
+    expect(recovery.state.selectedProviderId).toBe("atlas");
+    expect(recovery.state.metrics).toMatchObject({ purchases: 2, executions: 2, recoveries: 1, spend: 0.08 });
+  });
+
+  it("persists a settling cycle before Solana payment execution completes", async () => {
+    const store = new MemoryStateStore();
+    let finishExecution!: (result: Awaited<ReturnType<ExecutionAdapter["execute"]>>) => void;
+    let executions = 0;
+    const solanaAdapter: ExecutionAdapter = {
+      mode: "solana",
+      isReady: () => true,
+      execute: async () => {
+        executions += 1;
+        return new Promise((resolve) => { finishExecution = resolve; });
+      },
+    };
+    const buyer = new ProcurementOrchestrator(store, solanaAdapter);
+    await buyer.initialize();
+    const firstRun = buyer.run("crash-safe-key");
+    await vi.waitFor(() => expect(executions).toBe(1));
+
+    expect((await store.load())?.cycles[0]).toMatchObject({ idempotencyKey: "crash-safe-key", status: "settling" });
+    const restarted = new ProcurementOrchestrator(store, solanaAdapter);
+    await restarted.initialize();
+    const replay = await restarted.run("crash-safe-key");
+    expect(replay).toMatchObject({ replayed: true, cycle: { status: "settling" } });
+    expect(executions).toBe(1);
+
+    finishExecution({
+      executionId: "settled",
+      success: true,
+      latencyMs: 100,
+      output: { riskLevel: "low", riskScore: 12, factors: [] },
+      transactionHash: "signature",
+      transactionLink: "https://explorer.solana.com/tx/signature?cluster=devnet",
+      error: null,
+      paid: true,
+      amount: 0.03,
+      paymentProtocol: "spl",
+    });
+    await firstRun;
   });
 });
 

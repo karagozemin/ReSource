@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { timingSafeEqual } from "node:crypto";
-import type { StandingOrderUpdate } from "../src/types";
+import type { ExecutionMode, StandingOrderUpdate } from "../src/types";
 import type { ProcurementOrchestrator } from "./orchestrator";
 import type { TriggerEngine } from "./scheduler";
 
@@ -114,7 +114,7 @@ function isSponsoredDemoRoute(method: string, route: string) {
   ].includes(route);
 }
 
-function readSponsoredDemoConfig(executionMode: "demo" | "keeperhub") {
+function readSponsoredDemoConfig(executionMode: ExecutionMode) {
   return {
     enabled: executionMode === "keeperhub" && process.env.PUBLIC_DEMO_ENABLED === "true",
     pendingPaymentMaxAgeMs: 5 * 60 * 1000,

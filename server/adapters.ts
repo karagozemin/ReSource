@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Provider, StandingOrder } from "../src/types";
+import type { ExecutionMode, PaymentProtocol, Provider, StandingOrder } from "../src/types";
 
 export type ExecutionResult = {
   executionId: string;
@@ -7,14 +7,15 @@ export type ExecutionResult = {
   latencyMs: number;
   output: unknown;
   transactionHash: string | null;
+  transactionLink?: string | null;
   error: string | null;
   paid?: boolean;
   amount?: number;
-  paymentProtocol?: "x402" | null;
+  paymentProtocol?: PaymentProtocol;
 };
 
 export interface ExecutionAdapter {
-  readonly mode: "demo" | "keeperhub";
+  readonly mode: ExecutionMode;
   isReady(): boolean;
   execute(provider: Provider, order: StandingOrder): Promise<ExecutionResult>;
 }

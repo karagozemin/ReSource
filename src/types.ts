@@ -1,5 +1,7 @@
 export type StandingOrderStatus = "active" | "paused";
 export type ProviderState = "healthy" | "degraded" | "ineligible";
+export type ExecutionMode = "demo" | "keeperhub" | "solana";
+export type PaymentProtocol = "x402" | "spl" | null;
 
 export type StandingOrder = {
   id: string;
@@ -34,7 +36,9 @@ export type Provider = {
   workflow: string;
   workflowId?: string;
   marketplaceSlug?: string;
-  source?: "fixture" | "marketplace";
+  source?: "fixture" | "marketplace" | "http";
+  endpoint?: string;
+  paymentAddress?: string;
   price: number;
   reliability: number;
   latencyMs: number;
@@ -67,7 +71,7 @@ export type Metrics = {
   savings: number;
 };
 
-export type CycleStatus = "awaiting_payment" | "completed" | "failed" | "policy_blocked" | "no_provider";
+export type CycleStatus = "settling" | "awaiting_payment" | "completed" | "failed" | "policy_blocked" | "no_provider";
 
 export type PendingPayment = {
   cycleId: string;
@@ -104,9 +108,10 @@ export type ProcurementCycle = {
   selectedProviderId: string | null;
   status: CycleStatus;
   amount: number;
-  paymentProtocol?: "x402" | null;
+  paymentProtocol?: PaymentProtocol;
   executionId: string | null;
   transactionHash: string | null;
+  transactionLink?: string | null;
   error: string | null;
 };
 
@@ -119,7 +124,7 @@ export type AppState = {
   cycles: ProcurementCycle[];
   selectedProviderId: string | null;
   mode: "ready" | "running" | "awaiting_payment" | "healthy" | "recovering";
-  executionMode: "demo" | "keeperhub";
+  executionMode: ExecutionMode;
   integrationReady: boolean;
   pendingPayment: PendingPayment | null;
   directProof: DirectProof;
