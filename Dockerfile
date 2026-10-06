@@ -6,7 +6,7 @@ COPY . .
 RUN npm run build
 
 FROM node:24.15.0-bookworm-slim AS runtime
-ARG ONCHAINOS_VERSION=4.4.10
+ARG ONCHAINOS_VERSION=4.6.3
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && curl -fsSLo /tmp/onchainos "https://github.com/okx/onchainos-skills/releases/download/v${ONCHAINOS_VERSION}/onchainos-x86_64-unknown-linux-gnu" \

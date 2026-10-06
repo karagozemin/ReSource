@@ -3,7 +3,7 @@ set -eu
 
 source_dir="${ONCHAINOS_HOME:-$HOME/.onchainos}"
 output_file="${1:-render-wallet.b64}"
-required_files="session.json wallets.json keyring.enc machine-identity binary_identity.json"
+required_files="session.json wallets.json machine-identity binary_identity.json"
 
 for file in $required_files; do
   if [ ! -s "$source_dir/$file" ]; then

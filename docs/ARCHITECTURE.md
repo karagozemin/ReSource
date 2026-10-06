@@ -591,7 +591,7 @@ flowchart LR
     Wallet --> Base
 ```
 
-`vercel.json` defines a Vite build to `dist`. `render.yaml` builds the multi-stage Docker image from `Dockerfile`, checks `/api/health`, mounts a 1 GB persistent disk at `/app/storage`, selects `EXECUTION_MODE=keeperhub`, enables the sponsored public flow and keeps the scheduler disabled. The image pins Node `24.15.0`, builds the Vite client, installs production dependencies and downloads `onchainos 4.4.10` with checksum verification.
+`vercel.json` defines a Vite build to `dist`. `render.yaml` builds the multi-stage Docker image from `Dockerfile`, checks `/api/health`, mounts a 1 GB persistent disk at `/app/storage`, selects `EXECUTION_MODE=keeperhub`, enables the sponsored public flow and keeps the scheduler disabled. The image pins Node `24.15.0`, builds the Vite client, installs production dependencies and downloads `onchainos 4.6.3` with checksum verification.
 
 For split deployment, `VITE_API_BASE_URL` points the built browser to Render and `FRONTEND_ORIGIN` allows the Vercel origin. The Blueprint sets `DATA_DIR=/app/storage/data`; state and the runtime wallet home live on the mounted `/app/storage` disk rather than the ephemeral container filesystem.
 
