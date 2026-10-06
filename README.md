@@ -348,7 +348,7 @@ Live evidence is written to `data/runtime.json`. The file is intentionally ignor
 - Provider failure immediately suspends that provider. KeeperHub replacement payments retain explicit authorization; Solana mode uses a dedicated capped service wallet for autonomous replacement.
 - Direct execution requires simulation before the separate broadcast action and uses a unique KeeperHub idempotency key.
 - Wallet command errors are reduced to stable messages before persistence; backend secrets are not returned in application state.
-- Administrative production POST/PATCH endpoints require a timing-safe operator-key check. When the sponsored live demo is enabled, only procurement run and explicit payment confirmation are public. There is no separate sponsor spend cap; Standing Order price and accumulated-budget checks still run immediately before payment, and the runtime wallet should contain only the funds intended for public use.
+- Administrative production POST/PATCH endpoints require a timing-safe operator-key check. In sponsored Solana mode, procurement run and controlled failover are public; other mutations remain operator-protected. There is no separate sponsor spend cap, so Standing Order budget checks and a dedicated low-balance devnet wallet remain the outer limits.
 
 ## Testing
 
@@ -362,7 +362,7 @@ Vitest covers hard eligibility filters, deterministic ranking, failure suspensio
 
 ## Deployment
 
-[`vercel.json`](vercel.json) deploys the React client. [`render.yaml`](render.yaml) deploys the API as a live KeeperHub Docker service, installs the checksum-verified Linux `onchainos` CLI and mounts a persistent disk at `/app/storage`.
+[`vercel.json`](vercel.json) deploys the React client. [`render.yaml`](render.yaml) deploys the API in Solana devnet mode and mounts a persistent disk at `/app/storage`. The same image retains the optional KeeperHub adapter, but the Blueprint now runs the autonomous Solana path.
 
 ### 1. Create the Render Blueprint
 
@@ -372,27 +372,25 @@ Set these unsynced Render values:
 
 ```text
 FRONTEND_ORIGIN=https://<vercel-project>.vercel.app
-KEEPERHUB_API_KEY=<backend KeeperHub key>
-RESOURCE_BUYER_ADDRESS=<Agentic Wallet EVM address>
 ```
 
 Generate a strong value locally with `openssl rand -hex 32`, set it as Render's `OPERATOR_API_KEY`, and use the same value only in the dashboard's **Unlock** dialog. Do not add it to Vercel.
 
-The Blueprint fixes `EXECUTION_MODE=keeperhub`, keeps `SCHEDULER_ENABLED=false`, persists state under `/app/storage/data`, and checks `/api/health`. Its first deploy is expected to fail closed until the wallet Secret File in the next step is attached.
+The Blueprint fixes `EXECUTION_MODE=solana`, uses the deployed registry program and test mint on devnet, discovers its built-in provider endpoints from Render's `RENDER_EXTERNAL_URL`, keeps `SCHEDULER_ENABLED=false`, persists state under `/app/storage/data`, and checks `/api/health`. Its first deploy fails closed until the keypair Secret File in the next step is attached.
 
-### 2. Attach the authenticated wallet runtime
+### 2. Attach the dedicated Solana runtime signer
 
-Run this only on the authenticated operator machine:
+Run this only on the operator machine:
 
 ```bash
-sh scripts/export-render-wallet.sh
+pbcopy < target/deploy/resource-runtime-keypair.json
 ```
 
-This creates the gitignored `render-wallet.b64`. Open the **resource-api service itself** in Render (not the Blueprint page or an unrelated Environment Group), then open **Environment → Secret Files**. Create a Secret File with the exact filename `onchainos-wallet.b64`, paste the file contents, select **Save Changes**, and trigger **Manual Deploy → Deploy latest commit** if Render does not redeploy automatically.
+Open the **resource-api service itself** in Render, then open **Environment → Secret Files**. Create or replace a Secret File with the exact filename `solana-keypair.json`, paste the clipboard contents, select **Save Changes**, and trigger **Manual Deploy → Deploy latest commit** if Render does not redeploy automatically.
 
-Do not create an environment variable named `onchainos-wallet.b64`; the startup process requires a Secret File. Render mounts it at `/etc/secrets/onchainos-wallet.b64`; startup extracts it into the persistent runtime home and fails closed unless `onchainos wallet status` reports an authenticated session.
+Do not create an environment variable named `solana-keypair.json`. Render mounts the Secret File at `/etc/secrets/solana-keypair.json`, which matches `SOLANA_KEYPAIR_PATH`; startup refuses to continue if it is missing or empty.
 
-Never commit, log or publish `render-wallet.b64`. Treat it as a wallet credential and rotate it by logging out/re-authenticating locally, exporting again and replacing the Render secret file.
+Never commit, log or publish the keypair. It is ignored under `target/deploy`, dedicated to this devnet demo, and should never receive mainnet assets.
 
 ### 3. Deploy Vercel
 
@@ -402,16 +400,16 @@ Use repository root, Vite, build command `npm run build`, and output directory `
 VITE_API_BASE_URL=https://<render-service>.onrender.com
 ```
 
-Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In sponsored mode, visitors can run the quote → review → authorization flow without **Unlock**. Use **Unlock** and `OPERATOR_API_KEY` only for protected administrative controls; the key lives only until that browser tab/session is closed.
+Redeploy Vercel after setting the value. Update `FRONTEND_ORIGIN` on Render if the production Vercel domain changes. In sponsored mode, visitors can run procurement and controlled failover without **Unlock**. Use **Unlock** and `OPERATOR_API_KEY` only for protected administrative controls; the key lives only until that browser tab/session is closed.
 
-The scheduler must remain off. `render.yaml` enables a wallet-funded sponsored live demo. Visitors do not need the operator key or their own wallet, but every real payment still stops at the explicit dashboard confirmation showing network, token, human and atomic amount, and recipient as required by the **OKX Agent Payments Protocol**. Fund the runtime wallet only with the amount you are prepared to make available to public visitors.
+The scheduler remains off. `render.yaml` enables an autonomous, sponsored devnet demo backed by the dedicated runtime signer and tUSDC mint. The policy guard still checks per-call and cumulative budget before each payment. Explicit provider URLs can replace the built-in `/api/provider-services/*` endpoints through `RESOURCE_PROVIDER_SENTINEL_URL` and `RESOURCE_PROVIDER_ATLAS_URL`.
 
 ## Known limitations
 
 - Only one Standing Order and one transaction-risk result schema are implemented.
-- The allowlisted live catalog currently requires at least two configured Marketplace slugs; provider workflows live outside this repository.
+- The Solana demo ships two provider HTTP boundaries in the API process; independent production providers should replace them through environment variables.
 - `dailyBudget` is checked against cumulative `metrics.spend`; there is no calendar-day ledger or rollover yet.
-- A failed paid result may already have settled before verification. Recovery sources a replacement but requires another explicit payment authorization.
+- A failed paid result may already have settled before verification. Solana mode records the breach and pays a replacement automatically, so the policy budget must cover both calls.
 - Provider failure causes immediate `ineligible` status. The declared `degraded` state has no transition logic yet.
 - Tie-breaking relies on stable catalog order rather than an explicit secondary key.
 - JSON persistence and the mutation queue are safe only for one server process. There is no database transaction or distributed lock.
@@ -425,8 +423,8 @@ The scheduler must remain off. `render.yaml` enables a wallet-funded sponsored l
 
 | Criterion | Repository evidence |
 | --- | --- |
-| Real onchain execution | KeeperHub direct execution ID and confirmed Base Sepolia explorer transaction are linked above. |
-| KeeperHub integration | MCP discovery, public Marketplace workflow calls, x402 wallet payment, workflow receipts and direct execution are separate typed boundaries. |
+| Real onchain execution | The deployed Solana program, SPL transfers, breach transaction and replacement transaction are linked in `docs/SOLANA_MIGRATION.md`. |
+| Solana integration | `@solana/kit`, checked SPL transfers, a deterministic Anchor PDA and atomic payment/lifecycle instructions form separate typed boundaries. |
 | Reliability | Persisted policy, deterministic selection, observed provider history, result verification, suspension and replacement are implemented and tested. |
 | Observability | Cycle IDs, execution IDs, payment hashes, direct-proof links, provider metrics and audit events are exposed in the operations UI. |
 | Originality | ReSource operates on the demand side: the Standing Order persists while providers remain replaceable. |

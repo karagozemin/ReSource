@@ -115,6 +115,7 @@ The orchestrator chains state mutations on an in-process promise queue. Each cyc
 | Result verifier | Accepts only the transaction-risk result contract within the latency SLA; recursively unwraps common envelopes. | Provider output and measured latency; boolean. | Standing Order latency. | Invalid output fails the cycle; live paid providers are suspended and may trigger re-procurement. | private functions in `server/orchestrator.ts` |
 | Marketplace client | Discovers allowlisted listings, normalizes candidates, resolves x402 quotes and pays through the wallet CLI. | Provider history or pending payment; providers, quote or `ExecutionResult`. | KeeperHub MCP/API, `onchainos`. | Requires at least two configured listings; quote and wallet errors do not create purchase metrics. Expired quotes have a typed recovery path. | `server/marketplace.ts` |
 | Organization workflow adapter | Executes a configured KeeperHub organization workflow and waits up to the KeeperHub endpoint timeout for a receipt. | Selected provider and order; `ExecutionResult`. | KeeperHub workflow REST API. | Missing key/workflow ID or non-2xx response throws; no Marketplace payment is implied. | `server/adapters.ts` |
+| Solana execution adapter | Atomically combines checked SPL settlement with procurement registry instructions, calls the selected provider and exposes confirmed Explorer evidence. | Selected provider, order and procurement context; `ExecutionResult`. | Solana RPC, Token Program, registry program and provider HTTP endpoints. | Missing signer/mint/provider configuration fails readiness; a breach must be recorded before a replacement can be paid. | `server/solana.ts`, `server/solana-registry.ts` |
 | Demo adapter | Produces a known valid risk result after a short delay. | Selected fixture provider; `ExecutionResult`. | None external. | Always succeeds unless replaced by a test double. | `server/adapters.ts` |
 | Direct execution client | Obtains KeeperHub wallet, simulates the proof transfer, broadcasts it and polls terminal status. | Separate simulate/broadcast commands; `DirectProof`. | KeeperHub direct execution API. | Missing key, failed HTTP response or 20 nonterminal polls produces an error; broadcast is gated by saved simulation state in the orchestrator. | `server/direct-execution.ts` |
 | State store | Loads and atomically replaces a JSON state file; provides clone-based memory implementation for tests. | Whole `AppState`. | Node filesystem. | Read errors other than missing file propagate; write uses temporary file plus rename. | `server/store.ts` |
@@ -124,15 +125,15 @@ The orchestrator chains state mutations on an in-process promise queue. Each cyc
 
 `server/index.ts` is the composition root:
 
-1. `EXECUTION_MODE=keeperhub` selects `KeeperHubExecutionAdapter`; every other value selects `DemoExecutionAdapter`.
-2. KeeperHub mode additionally constructs `KeeperHubMarketplaceClient` and `KeeperHubDirectExecutionClient`.
+1. `EXECUTION_MODE=keeperhub` selects `KeeperHubExecutionAdapter`, `solana` selects `SolanaExecutionAdapter`, and every other value selects `DemoExecutionAdapter`.
+2. KeeperHub mode additionally constructs `KeeperHubMarketplaceClient` and `KeeperHubDirectExecutionClient`; Solana mode constructs its signer/RPC settlement boundary lazily.
 3. `DATA_DIR/runtime.json` is loaded. State from a different execution mode is discarded rather than mixed with the new mode.
 4. `integrationReady` comes from Marketplace readiness when the Marketplace client exists, otherwise from the execution adapter.
 5. A process that stopped in `running` or `recovering` restarts in `ready`; `awaiting_payment` remains persisted.
 6. `TriggerEngine` starts only when `SCHEDULER_ENABLED` is exactly `true`.
 7. Fastify binds to `HOST` and `PORT`.
 
-Marketplace readiness checks the API key, buyer address and at least two slugs. The application-level check does not inspect wallet funds or remote listing availability; those fail at their actual call boundaries. In the provided Render deployment, `render-start.sh` separately verifies the packaged `onchainos` wallet session before starting Fastify and fails closed when the Secret File is missing, empty or unauthenticated.
+Marketplace readiness checks the API key, buyer address and at least two slugs. Solana readiness checks the RPC, signer file, mint, program, two provider endpoints and two recipient addresses. Remote balances and provider availability still fail at their actual call boundaries. In the provided Render deployment, `render-start.sh` refuses to start Solana mode when the dedicated signer Secret File is missing or empty.
 
 ## 6. Full procurement lifecycle
 
@@ -573,29 +574,26 @@ flowchart LR
     subgraph Render[Render web service]
         API[Fastify and orchestrator]
         Disk[(DATA_DIR)]
-        CLI[onchainos process]
+        Signer[Dedicated devnet signer]
         API <--> Disk
-        API --> CLI
+        API --> Signer
     end
 
-    KH[KeeperHub API and MCP]
-    Wallet[Agentic Wallet]
-    Base[(Base and Base Sepolia)]
+    Providers[Sentinel and Atlas HTTP services]
+    Solana[(Solana devnet)]
 
     User --> Web
     Web -->|VITE_API_BASE_URL| API
-    API --> KH
-    CLI --> KH
-    CLI --> Wallet
-    KH --> Base
-    Wallet --> Base
+    API --> Providers
+    Signer --> Solana
+    API --> Solana
 ```
 
-`vercel.json` defines a Vite build to `dist`. `render.yaml` builds the multi-stage Docker image from `Dockerfile`, checks `/api/health`, mounts a 1 GB persistent disk at `/app/storage`, selects `EXECUTION_MODE=keeperhub`, enables the sponsored public flow and keeps the scheduler disabled. The image pins Node `24.15.0`, builds the Vite client, installs production dependencies and downloads `onchainos 4.6.3` with checksum verification.
+`vercel.json` defines a Vite build to `dist`. `render.yaml` builds the multi-stage Docker image from `Dockerfile`, checks `/api/health`, mounts a 1 GB persistent disk at `/app/storage`, selects `EXECUTION_MODE=solana`, configures the devnet registry/mint/provider recipients, enables the sponsored public flow and keeps the scheduler disabled. The image pins Node `24.15.0`; it retains `onchainos` only for optional KeeperHub-mode deployments.
 
 For split deployment, `VITE_API_BASE_URL` points the built browser to Render and `FRONTEND_ORIGIN` allows the Vercel origin. The Blueprint sets `DATA_DIR=/app/storage/data`; state and the runtime wallet home live on the mounted `/app/storage` disk rather than the ephemeral container filesystem.
 
-The authenticated wallet is exported locally to the gitignored `render-wallet.b64` package and attached to the Render service as `/etc/secrets/onchainos-wallet.b64`. `render-start.sh` extracts it into `/app/storage/home/.onchainos`, checks `wallet status`, and starts the API only when `loggedIn` is true. The credential package is never part of the image or repository.
+The dedicated runtime keypair remains under ignored `target/deploy` and is attached to the Render service as `/etc/secrets/solana-keypair.json`. The credential is never part of the image or repository. `RENDER_EXTERNAL_URL` supplies the default base URL for the two built-in provider boundaries; explicit provider URLs take precedence.
 
 ## 18. Repository map
 
@@ -638,9 +636,9 @@ Marketplace discovery supplies listing identity and price. ReSource overlays its
 
 Hard ceilings and floors represent authority: they must not be traded away. Scoring compares only providers that already satisfy that authority. The same separation allows the amount/order budget to be checked again at payment time.
 
-### Explicit payment authorization
+### Autonomous Solana settlement
 
-Unattended scheduler-driven purchasing would be unsafe with the current single-process store and shared-secret authorization model. The production scheduler therefore remains disabled. Persisting quotes creates an inspectable point between autonomous selection and funds movement, and expired quotes cannot silently reuse prior consent.
+The Solana runtime uses a dedicated low-balance service signer so the first eligible provider and a policy-approved replacement can be paid without a second browser authorization. The production scheduler remains disabled; public execution is limited by the Standing Order budget and devnet-only wallet funding. KeeperHub mode retains its explicit quote confirmation boundary.
 
 ### KeeperHub execution below ReSource procurement
 
@@ -658,20 +656,20 @@ The hackathon proof path is intentionally a fixed, separately authorized zero-va
 
 - One `AppState` contains one Standing Order and at most one pending quote.
 - The service category and verifier are fixed to transaction-risk intelligence.
-- At least two allowlisted Marketplace slugs are required in live discovery.
+- Solana mode needs two provider endpoints and recipient addresses; the Blueprint defaults to two built-in demo boundaries rather than independently operated providers.
 - “Daily” budget is cumulative spend without date rollover or quote-time reservation.
 - Provider suspension is binary and immediate; `degraded` is not used.
 - Catalog order is the implicit tie-breaker.
-- Replacement selection is automatic, but each Marketplace payment still requires explicit browser confirmation.
-- Paid-but-invalid results can consume budget before re-procurement, as x402 settles before result verification.
+- KeeperHub replacement payments require explicit browser confirmation; Solana replacement payments are autonomous after the onchain breach transition.
+- Paid-but-invalid results can consume budget before re-procurement because settlement occurs before result verification.
 - JSON storage, promise serialization and the scheduler are single-process mechanisms.
 - Scheduler enablement toggled through the API does not survive restart.
 - Administrative mutations use one shared operator key; there are no per-user identities, roles, expiring sessions or application rate limits.
-- Sponsored mode publicly exposes procurement run and explicit payment confirmation. It has no sponsor-wide spend cap, so the deployed wallet must be funded only with the amount intended for public use.
-- The Render Blueprint provisions live KeeperHub mode, a checksum-verified wallet CLI, a persistent disk and fail-closed Secret File restoration; wallet credential rotation remains a manual operator procedure.
+- Sponsored Solana mode publicly exposes procurement run and controlled failure. It has no rate limiter, so the policy budget and dedicated devnet wallet are the outer limits.
+- The Render Blueprint provisions Solana devnet mode, a persistent disk and fail-closed signer Secret File checks; key rotation remains a manual operator procedure.
 - Direct execution supports only Base Sepolia and one proof action.
 - MPP, smart contracts, database models, multi-tenant orders and provider-side code are absent from this repository.
-- Tests mock KeeperHub and wallet boundaries; there is no automated live integration suite.
+- Tests mock external settlement boundaries; a verified manual devnet proof is recorded in `docs/SOLANA_MIGRATION.md`.
 
 ## 21. Future architecture
 

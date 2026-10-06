@@ -65,9 +65,22 @@ npm run anchor:test
 
 The TypeScript suite validates Anchor discriminators, account order, PDA stability, settlement evidence and shared procurement identity across failover. Rust tests validate allowed and rejected lifecycle transitions. None of these commands send a live transaction.
 
-## Remaining deployment phases
+## Verified devnet deployment
 
-1. Deploy the committed registry program to devnet using the dedicated deploy authority.
-2. Configure a devnet SPL mint, a low-balance runtime signer and two real provider endpoints.
-3. Run the full controlled-failure flow and capture the three transaction proofs plus the final PDA state.
-4. Switch the final proof to real Solana USDC only after devnet verification and strict wallet funding limits.
+The registry program is deployed at [`G3sta…WVvm4`](https://explorer.solana.com/address/G3sta1z39YXTX5dopAXtuv6kqBTQGoN9G85DMW3WVvm4?cluster=devnet). A dedicated runtime signer holds the devnet-only [`tUSDC` mint](https://explorer.solana.com/address/FCv4FDXqEcLDXn6F55TcPst9DZY3uo6YDeVUxN6SgnLw?cluster=devnet).
+
+The complete controlled-failure path was executed against devnet:
+
+1. [Sentinel payment + `create_procurement`](https://explorer.solana.com/tx/5mwjjbzmuJpGDBHkPWwyjpP4fn1W6c6s6im8KUyH79dVmeaRV9EJq8fpaKVv7xbANJVCNzcb3Noar3PN149gYXMy?cluster=devnet)
+2. [SLA breach record](https://explorer.solana.com/tx/2TnDHD5HDEUhpGTXozst5WcMjpet2SFaWQXtaQpZNmtnD6F7sLF69j5japnzqCPpJW4LiWkrbmAiv5R8pqtou6Nn?cluster=devnet)
+3. [Atlas payment + `replace_provider`](https://explorer.solana.com/tx/3afkNjXrUh7Y2xCHp994FYKCnmXxPH6S5qXdMWWmEqEN32dGDshbDbVF9QSifiJefpnTzwRBEyY2JUt2n6ddevF?cluster=devnet)
+4. [Final procurement PDA](https://explorer.solana.com/address/93hxFwweZF9UBFQwSyXbjo7dFhgVVDzU9RWrXeBQHoBm?cluster=devnet)
+
+Sentinel received `0.03 tUSDC`, Atlas received `0.05 tUSDC`, and the same procurement PDA moved through `Active → Breached → Replaced` without a second human authorization.
+
+## Remaining production work
+
+1. Attach the dedicated runtime keypair Secret File and deploy the Solana Blueprint on Render.
+2. Replace the built-in demo provider endpoints with independently hosted providers when available.
+3. Use a private RPC endpoint before sustained traffic.
+4. Switch to real Solana USDC only after strict wallet funding and rate limits are in place.

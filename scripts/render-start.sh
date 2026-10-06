@@ -21,4 +21,14 @@ if [ "${EXECUTION_MODE:-demo}" = "keeperhub" ]; then
   printf '%s' "$wallet_status" | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => { const data=JSON.parse(value); if (!data.ok || !data.data?.loggedIn) process.exit(1); });'
 fi
 
+if [ "${EXECUTION_MODE:-demo}" = "solana" ]; then
+  solana_keypair="${SOLANA_KEYPAIR_PATH:-/etc/secrets/solana-keypair.json}"
+  if [ ! -s "$solana_keypair" ]; then
+    echo "Missing or empty Render Solana keypair secret file: $solana_keypair" >&2
+    echo "Add the dedicated devnet runtime keypair as a Secret File, then redeploy." >&2
+    exit 1
+  fi
+  chmod 600 "$solana_keypair"
+fi
+
 exec npm start

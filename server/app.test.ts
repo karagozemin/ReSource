@@ -107,6 +107,23 @@ describe("procurement API", () => {
     }
   });
 
+  it("serves the built-in paid provider boundary without the operator key", async () => {
+    const previous = process.env.OPERATOR_API_KEY;
+    process.env.OPERATOR_API_KEY = "test-operator-key";
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/provider-services/sentinel/risk",
+        payload: { service: "Transaction Risk Intelligence", standingOrderId: "SO-001", paymentSignature: "devnet-signature" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ riskLevel: "low", riskScore: 18, source: "sentinel", paymentSignature: "devnet-signature" });
+    } finally {
+      if (previous === undefined) delete process.env.OPERATOR_API_KEY;
+      else process.env.OPERATOR_API_KEY = previous;
+    }
+  });
+
   it("allows only the sponsored procurement flow without an operator key", async () => {
     const previousKey = process.env.OPERATOR_API_KEY;
     const previousDemo = process.env.PUBLIC_DEMO_ENABLED;
@@ -129,6 +146,51 @@ describe("procurement API", () => {
       expect(publicRun.statusCode).toBe(200);
       expect(protectedToggle.statusCode).toBe(401);
       expect(runtime.json()).toMatchObject({ sponsoredDemo: { enabled: true } });
+    } finally {
+      if (previousKey === undefined) delete process.env.OPERATOR_API_KEY;
+      else process.env.OPERATOR_API_KEY = previousKey;
+      if (previousDemo === undefined) delete process.env.PUBLIC_DEMO_ENABLED;
+      else process.env.PUBLIC_DEMO_ENABLED = previousDemo;
+    }
+  });
+
+  it("allows sponsored Solana procurement and controlled failover without an operator key", async () => {
+    const previousKey = process.env.OPERATOR_API_KEY;
+    const previousDemo = process.env.PUBLIC_DEMO_ENABLED;
+    process.env.OPERATOR_API_KEY = "test-operator-key";
+    process.env.PUBLIC_DEMO_ENABLED = "true";
+    await app.close();
+    const solanaAdapter = {
+      mode: "solana" as const,
+      isReady: () => true,
+      execute: async (provider: { id: string }, _order: unknown, context?: { procurementId: string }) => ({
+        executionId: `test-${provider.id}`,
+        success: true,
+        latencyMs: 1,
+        output: { riskLevel: "low", riskScore: 1, factors: [] },
+        transactionHash: `signature-${provider.id}`,
+        transactionLink: `https://explorer.solana.com/tx/signature-${provider.id}?cluster=devnet`,
+        error: null,
+        paid: true,
+        amount: provider.id === "sentinel" ? 0.03 : 0.05,
+        paymentProtocol: "spl" as const,
+        procurementAddress: `procurement-${context?.procurementId}`,
+      }),
+      markBreached: async () => ({ signature: "breach-signature", explorerUrl: "https://explorer.solana.com/tx/breach-signature?cluster=devnet", procurementAddress: "procurement" }),
+    };
+    const orchestrator = new ProcurementOrchestrator(new MemoryStateStore(), solanaAdapter);
+    await orchestrator.initialize();
+    app = buildApp(orchestrator);
+
+    try {
+      const first = await app.inject({ method: "POST", url: "/api/standing-orders/SO-001/run", headers: { "idempotency-key": "solana-sponsored-cycle" } });
+      const recovery = await app.inject({ method: "POST", url: "/api/providers/selected/failure" });
+      const protectedToggle = await app.inject({ method: "POST", url: "/api/standing-orders/toggle" });
+      expect(first.statusCode).toBe(200);
+      expect(first.json().cycle).toMatchObject({ selectedProviderId: "sentinel", paymentProtocol: "spl" });
+      expect(recovery.statusCode).toBe(200);
+      expect(recovery.json().cycle).toMatchObject({ selectedProviderId: "atlas", paymentProtocol: "spl" });
+      expect(protectedToggle.statusCode).toBe(401);
     } finally {
       if (previousKey === undefined) delete process.env.OPERATOR_API_KEY;
       else process.env.OPERATOR_API_KEY = previousKey;

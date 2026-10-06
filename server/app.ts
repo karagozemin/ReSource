@@ -27,6 +27,7 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
   app.addHook("preHandler", async (request, reply) => {
     if (!isMutation(request.method)) return;
     const route = request.routeOptions.url ?? request.url;
+    if (isProviderServiceRoute(request.method, route)) return;
     if (sponsoredDemo.enabled && isSponsoredDemoRoute(request.method, route)) {
       return;
     }
@@ -41,6 +42,26 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
 
   app.get("/api/health", async () => ({ ok: true, mode: orchestrator.snapshot().executionMode }));
   app.get("/api/state", async () => orchestrator.snapshot());
+  app.post<{ Params: { providerId: string }; Body: { service?: unknown; standingOrderId?: unknown; paymentSignature?: unknown } }>("/api/provider-services/:providerId/risk", async (request, reply) => {
+    if (request.params.providerId !== "sentinel" && request.params.providerId !== "atlas") {
+      return reply.code(404).send({ error: "Provider service not found" });
+    }
+    if (
+      typeof request.body?.service !== "string"
+      || typeof request.body?.standingOrderId !== "string"
+      || typeof request.body?.paymentSignature !== "string"
+    ) {
+      return reply.code(400).send({ error: "A service, standing order and payment signature are required" });
+    }
+    return {
+      riskLevel: request.params.providerId === "sentinel" ? "low" : "medium",
+      riskScore: request.params.providerId === "sentinel" ? 18 : 31,
+      factors: request.params.providerId === "sentinel" ? [] : ["replacement-provider"],
+      verified: true,
+      source: request.params.providerId,
+      paymentSignature: request.body.paymentSignature,
+    };
+  });
   app.get("/api/runtime", async () => ({
     scheduler: scheduler?.status() ?? { enabled: false, pollMs: null },
     sponsoredDemo: {
@@ -107,16 +128,21 @@ export function buildApp(orchestrator: ProcurementOrchestrator, scheduler?: Trig
 
 function isMutation(method: string) { return method === "POST" || method === "PATCH" || method === "PUT" || method === "DELETE"; }
 
+function isProviderServiceRoute(method: string, route: string) {
+  return method === "POST" && route === "/api/provider-services/:providerId/risk";
+}
+
 function isSponsoredDemoRoute(method: string, route: string) {
   return method === "POST" && [
     "/api/standing-orders/:id/run",
     "/api/procurement/:cycleId/confirm-payment",
+    "/api/providers/selected/failure",
   ].includes(route);
 }
 
 function readSponsoredDemoConfig(executionMode: ExecutionMode) {
   return {
-    enabled: executionMode === "keeperhub" && process.env.PUBLIC_DEMO_ENABLED === "true",
+    enabled: executionMode !== "demo" && process.env.PUBLIC_DEMO_ENABLED === "true",
     pendingPaymentMaxAgeMs: 5 * 60 * 1000,
   };
 }

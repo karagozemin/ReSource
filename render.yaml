@@ -12,7 +12,7 @@ services:
       sizeGB: 1
     envVars:
       - key: EXECUTION_MODE
-        value: keeperhub
+        value: solana
       - key: DATA_DIR
         value: /app/storage/data
       - key: SCHEDULER_ENABLED
@@ -25,15 +25,23 @@ services:
         sync: false
       - key: PUBLIC_DEMO_ENABLED
         value: "true"
-      - key: KEEPERHUB_API_URL
-        value: https://app.keeperhub.com/api
-      - key: KEEPERHUB_API_KEY
-        sync: false
-      - key: KEEPERHUB_MARKETPLACE_SLUGS
-        value: resource-sentinel-risk-provider,resource-atlas-risk-provider
-      - key: RESOURCE_BUYER_ADDRESS
-        sync: false
-      - key: RESOURCE_RISK_CONTRACT
-        value: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-      - key: RESOURCE_RISK_CALLDATA
-        value: 0xa9059cbb000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000f4240
+      - key: SOLANA_CLUSTER
+        value: devnet
+      - key: SOLANA_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: SOLANA_RPC_SUBSCRIPTIONS_URL
+        value: wss://api.devnet.solana.com
+      - key: SOLANA_KEYPAIR_PATH
+        value: /etc/secrets/solana-keypair.json
+      - key: SOLANA_TOKEN_MINT
+        value: FCv4FDXqEcLDXn6F55TcPst9DZY3uo6YDeVUxN6SgnLw
+      - key: SOLANA_TOKEN_SYMBOL
+        value: tUSDC
+      - key: SOLANA_TOKEN_DECIMALS
+        value: "6"
+      - key: SOLANA_REGISTRY_PROGRAM_ID
+        value: G3sta1z39YXTX5dopAXtuv6kqBTQGoN9G85DMW3WVvm4
+      - key: RESOURCE_PROVIDER_SENTINEL_SOLANA_ADDRESS
+        value: 5UXeGPPJPx65T81PJitht2YscnQFNuy3vyPQUqAGrbE4
+      - key: RESOURCE_PROVIDER_ATLAS_SOLANA_ADDRESS
+        value: 2LK5M8TcbUFazXHSzCFxKd3u7UG9171zCk62AJF1jsav

@@ -242,9 +242,10 @@ export function readSolanaSettlementConfig(env: NodeJS.ProcessEnv = process.env)
 }
 
 export function readSolanaProviderEndpoints(env: NodeJS.ProcessEnv = process.env): ProviderEndpoints {
+  const baseUrl = (env.RESOURCE_PROVIDER_BASE_URL || env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
   return {
-    sentinel: env.RESOURCE_PROVIDER_SENTINEL_URL,
-    atlas: env.RESOURCE_PROVIDER_ATLAS_URL,
+    sentinel: env.RESOURCE_PROVIDER_SENTINEL_URL || (baseUrl ? `${baseUrl}/api/provider-services/sentinel/risk` : undefined),
+    atlas: env.RESOURCE_PROVIDER_ATLAS_URL || (baseUrl ? `${baseUrl}/api/provider-services/atlas/risk` : undefined),
   };
 }
 
